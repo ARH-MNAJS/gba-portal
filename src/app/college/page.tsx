@@ -1,14 +1,13 @@
 "use client";
 
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AuthGuard } from "@/components/auth-guard";
-import { UserRole } from "@/lib/supabase";
+import { UserRole } from "@/lib/auth-utils";
 
 export default function CollegeDashboardPage() {
-  const { data: session, status } = useSession();
-  const loading = status === "loading";
+  const { user, loading } = useSession();
   const router = useRouter();
 
   // College dashboard content
@@ -17,7 +16,7 @@ export default function CollegeDashboardPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">
-            Welcome, {session?.user?.name || session?.user?.email}
+            Welcome, {user?.name || user?.email}
           </CardTitle>
         </CardHeader>
         <CardContent>

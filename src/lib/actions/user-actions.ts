@@ -1,95 +1,73 @@
 'use server';
 
-import { adminQuery, adminAuth } from '../supabase-admin';
 import { revalidatePath } from 'next/cache';
+import * as bcrypt from 'bcryptjs';
+import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { UserRole } from '@/lib/auth-utils';
 
 /**
- * Fetch users with pagination
+ * Fetch users with pagination and optional role filter
  */
-export async function fetchUsers(page: number = 1, perPage: number = 10) {
+export async function fetchUsers(page: number = 1, perPage: number = 10, role?: UserRole) {
   try {
-    // Get count of all users for pagination
-    const { count, error: countError } = await (await adminQuery('users'))
-      .select('*', { count: 'exact', head: true });
+    // Query users collection
+    let usersQuery = adminDb.collection('users');
     
-    if (countError) throw countError;
+    // Apply role filter if provided
+    if (role) {
+      usersQuery = usersQuery.where('role', '==', role);
+    }
     
-    // Calculate pagination values
-    const from = (page - 1) * perPage;
-    const to = from + perPage - 1;
+    // Get total count for pagination
+    const totalSnapshot = await usersQuery.get();
+    const totalUsers = totalSnapshot.size;
     
-    // Fetch users for the current page
-    const { data, error } = await (await adminQuery('users'))
-      .select('id, email, role')
-      .range(from, to)
-      .order('email', { ascending: true });
+    // Calculate pagination
+    const offset = (page - 1) * perPage;
     
-    if (error) throw error;
+    // Get paginated users
+    const userSnapshot = await usersQuery
+      .orderBy('email')
+      .limit(perPage)
+      .offset(offset)
+      .get();
     
-    if (!data) return { users: [], totalPages: 0, totalUsers: 0 };
-    
-    // Fetch additional details for each user
-    const enrichedUsers = await Promise.all(
-      data.map(async (user) => {
-        let name = "";
-        let phone = "";
-        
-        if (user.role === "student") {
-          const { data: studentData } = await (await adminQuery('students'))
-            .select('name, phone, college, branch, year')
-            .eq('id', user.id)
-            .single();
-            
-          if (studentData) {
-            return {
-              ...user,
-              name: studentData.name,
-              phone: studentData.phone || '',
-              college: studentData.college || '',
-              branch: studentData.branch || '',
-              year: studentData.year || '',
-            };
-          }
-        } else if (user.role === "admin") {
-          const { data: adminData } = await (await adminQuery('admins'))
-            .select('name, phone')
-            .eq('id', user.id)
-            .single();
-            
-          if (adminData) {
-            return {
-              ...user,
-              name: adminData.name,
-              phone: adminData.phone || '',
-            };
-          }
-        } else if (user.role === "college") {
-          const { data: collegeData } = await (await adminQuery('colleges'))
-            .select('name, phone')
-            .eq('id', user.id)
-            .single();
-            
-          if (collegeData) {
-            return {
-              ...user,
-              name: collegeData.name,
-              phone: collegeData.phone || '',
-            };
-          }
+    // Get user data with additional details
+    const users = [];
+    for (const doc of userSnapshot.docs) {
+      const userData = doc.data();
+      const userId = doc.id;
+      let additionalData = {};
+      
+      // Get role-specific data
+      if (userData.role === 'student') {
+        const studentDoc = await adminDb.collection('students').doc(userId).get();
+        if (studentDoc.exists) {
+          additionalData = studentDoc.data() || {};
         }
-        
-        return {
-          ...user,
-          name,
-          phone,
-        };
-      })
-    );
+      } else if (userData.role === 'admin') {
+        const adminDoc = await adminDb.collection('admins').doc(userId).get();
+        if (adminDoc.exists) {
+          additionalData = adminDoc.data() || {};
+        }
+      } else if (userData.role === 'college') {
+        const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
+        if (collegeDoc.exists) {
+          additionalData = collegeDoc.data() || {};
+        }
+      }
+      
+      users.push({
+        id: userId,
+        ...userData,
+        ...additionalData
+      });
+    }
     
     return {
-      users: enrichedUsers,
-      totalPages: Math.ceil((count || 0) / perPage),
-      totalUsers: count || 0
+      users,
+      totalPages: Math.ceil(totalUsers / perPage),
+      totalUsers
     };
   } catch (error: any) {
     console.error('Error fetching users:', error);
@@ -102,42 +80,35 @@ export async function fetchUsers(page: number = 1, perPage: number = 10) {
  */
 export async function fetchUserById(userId: string) {
   try {
-    // Fetch user data from the users table
-    const { data: userData, error: userError } = await (await adminQuery('users'))
-      .select('*')
-      .eq('id', userId)
-      .single();
-      
-    if (userError) throw userError;
+    // Get user data from users collection
+    const userDoc = await adminDb.collection('users').doc(userId).get();
     
-    if (!userData) {
+    if (!userDoc.exists) {
       throw new Error('User not found');
     }
     
+    const userData = userDoc.data() || {};
     let detailedUser = {
-      id: userData.id,
-      email: userData.email,
-      role: userData.role,
+      id: userId,
+      email: userData.email || '',
+      role: userData.role as UserRole,
       name: '',
       phone: '',
       college: '',
       branch: '',
       year: '',
-      created_at: undefined,
-      last_sign_in_at: undefined,
+      createdAt: userData.createdAt || '',
+      updatedAt: userData.updatedAt || '',
     };
     
     // Get role-specific data
     if (userData.role === 'student') {
-      const { data: studentData, error: studentError } = await (await adminQuery('students'))
-        .select('*')
-        .eq('id', userId)
-        .single();
-        
-      if (!studentError && studentData) {
+      const studentDoc = await adminDb.collection('students').doc(userId).get();
+      if (studentDoc.exists) {
+        const studentData = studentDoc.data() || {};
         detailedUser = {
           ...detailedUser,
-          name: studentData.name,
+          name: studentData.name || '',
           phone: studentData.phone || '',
           college: studentData.college || '',
           branch: studentData.branch || '',
@@ -145,39 +116,26 @@ export async function fetchUserById(userId: string) {
         };
       }
     } else if (userData.role === 'admin') {
-      const { data: adminData, error: adminError } = await (await adminQuery('admins'))
-        .select('*')
-        .eq('id', userId)
-        .single();
-        
-      if (!adminError && adminData) {
+      const adminDoc = await adminDb.collection('admins').doc(userId).get();
+      if (adminDoc.exists) {
+        const adminData = adminDoc.data() || {};
         detailedUser = {
           ...detailedUser,
-          name: adminData.name,
+          name: adminData.name || '',
           phone: adminData.phone || '',
         };
       }
     } else if (userData.role === 'college') {
-      const { data: collegeData, error: collegeError } = await (await adminQuery('colleges'))
-        .select('*')
-        .eq('id', userId)
-        .single();
-        
-      if (!collegeError && collegeData) {
+      const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
+      if (collegeDoc.exists) {
+        const collegeData = collegeDoc.data() || {};
         detailedUser = {
           ...detailedUser,
-          name: collegeData.name,
+          name: collegeData.name || '',
           phone: collegeData.phone || '',
+          college: collegeData.college || '',
         };
       }
-    }
-    
-    // Get auth metadata
-    const { data: authData, error: authError } = await (await adminAuth()).getUserById(userId);
-    
-    if (!authError && authData?.user) {
-      detailedUser.created_at = authData.user.created_at;
-      detailedUser.last_sign_in_at = authData.user.last_sign_in_at;
     }
     
     return detailedUser;
@@ -192,51 +150,34 @@ export async function fetchUserById(userId: string) {
  */
 export async function deleteUser(userId: string) {
   try {
-    // Get user to determine role
-    const { data: userData, error: userError } = await (await adminQuery('users'))
-      .select('role')
-      .eq('id', userId)
-      .single();
-      
-    if (userError) throw userError;
+    // Get user data to determine role
+    const userDoc = await adminDb.collection('users').doc(userId).get();
     
-    // Delete from role-specific table
-    if (userData.role === 'student') {
-      const { error: studentError } = await (await adminQuery('students'))
-        .delete()
-        .eq('id', userId);
-        
-      if (studentError) throw studentError;
-    } else if (userData.role === 'admin') {
-      const { error: adminError } = await (await adminQuery('admins'))
-        .delete()
-        .eq('id', userId);
-        
-      if (adminError) throw adminError;
-    } else if (userData.role === 'college') {
-      const { error: collegeError } = await (await adminQuery('colleges'))
-        .delete()
-        .eq('id', userId);
-        
-      if (collegeError) throw collegeError;
+    if (!userDoc.exists) {
+      throw new Error('User not found');
     }
     
-    // Delete from users table
-    const { error: userDeleteError } = await (await adminQuery('users'))
-      .delete()
-      .eq('id', userId);
-      
-    if (userDeleteError) throw userDeleteError;
+    const userData = userDoc.data() || {};
     
-    // Delete from auth
-    const { error: authError } = await (await adminAuth()).deleteUser(userId);
+    // Delete from role-specific collection
+    if (userData.role === 'student') {
+      await adminDb.collection('students').doc(userId).delete();
+    } else if (userData.role === 'admin') {
+      await adminDb.collection('admins').doc(userId).delete();
+    } else if (userData.role === 'college') {
+      await adminDb.collection('colleges').doc(userId).delete();
+    }
     
-    if (authError) throw authError;
+    // Delete from users collection
+    await adminDb.collection('users').doc(userId).delete();
     
-    // Revalidate the users page to update the list
-    revalidatePath('/admin/user');
+    // Delete from Firebase Authentication
+    await adminAuth.deleteUser(userId);
     
-    return { success: true };
+    // Revalidate users page
+    revalidatePath('/admin/users');
+    
+    return { success: true, message: 'User deleted successfully' };
   } catch (error: any) {
     console.error('Error deleting user:', error);
     throw new Error(error.message || 'Failed to delete user');
@@ -259,77 +200,70 @@ interface CreateUserData {
  */
 export async function createUser(userData: CreateUserData) {
   try {
-    // Create the user in Supabase Auth
-    const { data: authData, error: authError } = await (await adminAuth()).createUser({
+    // Check if email already exists
+    try {
+      await adminAuth.getUserByEmail(userData.email);
+      throw new Error('User with this email already exists');
+    } catch (error: any) {
+      // We expect an auth/user-not-found error, which means we can proceed
+      if (error.code !== 'auth/user-not-found') {
+        throw error;
+      }
+    }
+    
+    // Create user in Firebase Authentication
+    const userRecord = await adminAuth.createUser({
       email: userData.email,
       password: userData.password,
-      email_confirm: false,
-      user_metadata: {
-        name: userData.name,
-        role: userData.role,
-      },
+      emailVerified: false,
     });
     
-    if (authError) throw authError;
+    const userId = userRecord.uid;
+    const timestamp = new Date().toISOString();
     
-    if (!authData.user) {
-      throw new Error('Failed to create user');
-    }
-    
-    // Add to users table
-    const { error: userError } = await (await adminQuery('users'))
-      .upsert({
-        id: authData.user.id,
-        email: userData.email,
-        role: userData.role,
-      });
-      
-    if (userError) {
-      // Rollback: delete the auth user if users table insert fails
-      await (await adminAuth()).deleteUser(authData.user.id);
-      throw userError;
-    }
+    // Add to users collection
+    await adminDb.collection('users').doc(userId).set({
+      email: userData.email.toLowerCase(),
+      role: userData.role,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
     
     // Add role-specific data
     if (userData.role === 'student') {
-      const { error: studentError } = await (await adminQuery('students'))
-        .upsert({
-          id: authData.user.id,
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone || '',
-          college: userData.college || '',
-          branch: userData.branch || '',
-          year: userData.year || '',
-        });
-        
-      if (studentError) throw studentError;
+      await adminDb.collection('students').doc(userId).set({
+        name: userData.name,
+        email: userData.email.toLowerCase(),
+        phone: userData.phone || '',
+        college: userData.college || '',
+        branch: userData.branch || '',
+        year: userData.year || '',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
     } else if (userData.role === 'admin') {
-      const { error: adminError } = await (await adminQuery('admins'))
-        .upsert({
-          id: authData.user.id,
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone || '',
-        });
-        
-      if (adminError) throw adminError;
+      await adminDb.collection('admins').doc(userId).set({
+        name: userData.name,
+        email: userData.email.toLowerCase(),
+        phone: userData.phone || '',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
     } else if (userData.role === 'college') {
-      const { error: collegeError } = await (await adminQuery('colleges'))
-        .upsert({
-          id: authData.user.id,
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone || '',
-        });
-        
-      if (collegeError) throw collegeError;
+      await adminDb.collection('colleges').doc(userId).set({
+        name: userData.name,
+        email: userData.email.toLowerCase(),
+        phone: userData.phone || '',
+        college: userData.college || '',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
     }
     
-    // Revalidate the users page to update the list
-    revalidatePath('/admin/user');
+    // Revalidate users page
+    revalidatePath('/admin/users');
     
-    return { success: true, user: authData.user };
+    return { success: true, userId };
   } catch (error: any) {
     console.error('Error creating user:', error);
     throw new Error(error.message || 'Failed to create user');
@@ -343,7 +277,7 @@ interface BulkImportResult {
 }
 
 /**
- * Import users in bulk
+ * Bulk import users (students)
  */
 export async function bulkImportUsers(
   rows: Array<{ name: string; email: string; phone: string }>,
@@ -352,24 +286,15 @@ export async function bulkImportUsers(
   const result: BulkImportResult = {
     success: 0,
     failed: 0,
-    errors: [],
+    errors: []
   };
   
   for (const row of rows) {
     try {
-      // Validate data
-      if (!row.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email)) {
-        throw new Error("Invalid email format");
-      }
+      // Generate a random password
+      const password = Math.random().toString(36).substring(2, 10);
       
-      if (!row.phone || !/^\d{10}$/.test(row.phone)) {
-        throw new Error("Phone must be 10 digits");
-      }
-      
-      // Create random password
-      const password = Math.random().toString(36).slice(-8);
-      
-      // Create user
+      // Create the user
       await createUser({
         email: row.email,
         password,
@@ -378,7 +303,7 @@ export async function bulkImportUsers(
         phone: row.phone,
         college: commonData.college,
         branch: commonData.branch,
-        year: commonData.year,
+        year: commonData.year
       });
       
       result.success++;
@@ -386,10 +311,13 @@ export async function bulkImportUsers(
       result.failed++;
       result.errors.push({
         email: row.email,
-        error: error.message || 'Unknown error',
+        error: error.message || 'Unknown error'
       });
     }
   }
+  
+  // Revalidate users page
+  revalidatePath('/admin/users');
   
   return result;
 } 

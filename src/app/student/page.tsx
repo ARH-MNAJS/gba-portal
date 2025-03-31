@@ -2,18 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { StudentSidebar } from "@/components/student-sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { AuthGuard } from "@/components/auth-guard";
-import { UserRole } from "@/lib/supabase";
+import { UserRole } from "@/lib/auth-utils";
 
 export default function StudentDashboardPage() {
-  const { data: session, status } = useSession();
-  const loading = status === "loading";
+  const { user, loading } = useSession();
   const router = useRouter();
 
   // Student dashboard content
@@ -22,7 +21,7 @@ export default function StudentDashboardPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">
-            Welcome, {session?.user?.name || session?.user?.email}
+            Welcome, {user?.name || user?.email}
           </CardTitle>
         </CardHeader>
         <CardContent>

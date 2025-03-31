@@ -1,7 +1,7 @@
 "use client";
 
 import { StudentSidebar } from "@/components/student-sidebar";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 import { Header } from "@/components/header";
 
 export default function StudentLayout({

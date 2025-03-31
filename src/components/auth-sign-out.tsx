@@ -1,9 +1,10 @@
 "use client";
 
-import { signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useCallback } from "react";
+import { auth } from "@/lib/firebase";
+import { signOut as firebaseSignOut } from "firebase/auth";
 
 /**
  * Centralized sign out handler that can be called from any component
@@ -20,7 +21,7 @@ export const useSignOut = () => {
     }
     
     try {
-      await signOut({ redirect: false });
+      await firebaseSignOut(auth);
       toast.success('Signed out successfully');
       router.push('/');
       router.refresh();

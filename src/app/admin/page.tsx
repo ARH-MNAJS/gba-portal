@@ -1,17 +1,16 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AuthGuard } from "@/components/auth-guard";
-import { UserRole } from "@/lib/supabase";
+import { UserRole } from "@/lib/auth-utils";
 import { Users, School, GamepadIcon, BarChart2 } from "lucide-react";
+import { useSession } from "@/providers/session-provider";
 
 export default function AdminDashboardPage() {
-  const { data: session, status } = useSession();
-  const loading = status === "loading";
+  const { user, loading } = useSession();
   const router = useRouter();
 
   // Admin dashboard content

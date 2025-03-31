@@ -1,11 +1,26 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { UserRole, getSupabaseClient } from './supabase';
-import { toast } from 'sonner';
-import { signIn, signOut, useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { 
+  signInWithEmailAndPassword, 
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  User as FirebaseUser
+} from 'firebase/auth';
 import { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { auth } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from './firebase';
+import { toast } from 'sonner';
+
+export type UserRole = 'admin' | 'student' | 'college';
+
+export interface User {
+  id: string;
+  email: string;
+  role: UserRole;
+  name?: string;
+}
 
 /**
  * Handles authentication errors with appropriate user-friendly messages
@@ -14,20 +29,25 @@ export const handleAuthError = (error: any): string => {
   if (!error) return '';
 
   // Network errors
-  if (error.message?.includes('network') || error.code === 'NETWORK_ERROR') {
+  if (error.message?.includes('network') || error.code === 'auth/network-request-failed') {
     return "Connection error. Please check your internet and try again.";
   }
 
   // Auth specific errors
-  if (error.message?.includes('Invalid login credentials') || 
-      error.message?.includes('Invalid email or password') ||
-      error.code === 'INVALID_LOGIN_CREDENTIALS') {
+  if (error.code === 'auth/invalid-credential' || 
+      error.code === 'auth/wrong-password' ||
+      error.code === 'auth/user-not-found') {
     return "Invalid email or password. Please try again.";
   }
 
-  // Session expired
-  if (error.message?.includes('session') || error.code === 'EXPIRED_SESSION') {
-    return "Your session has expired. Please login again.";
+  // User disabled
+  if (error.code === 'auth/user-disabled') {
+    return "This account has been disabled. Please contact support.";
+  }
+
+  // Too many requests
+  if (error.code === 'auth/too-many-requests') {
+    return "Too many failed login attempts. Please try again later.";
   }
 
   // Default error message
@@ -39,20 +59,42 @@ export const handleAuthError = (error: any): string => {
  * Returns the authenticated user and authentication status
  */
 export const useRequireAuth = () => {
-  const { data: session, status } = useSession();
-  const loading = status === 'loading';
-  const isAuthenticated = status === 'authenticated';
-  
-  // Create a client with the session token if available
-  const supabaseClient = session?.supabaseAccessToken 
-    ? getSupabaseClient(session.supabaseAccessToken)
-    : null;
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Fetch additional user data from Firestore
+        try {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as Omit<User, 'id'>;
+            setUser({
+              id: firebaseUser.uid,
+              ...userData,
+            });
+          } else {
+            console.error('User document does not exist in Firestore');
+            setUser(null);
+          }
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          setUser(null);
+        }
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   return {
-    user: session?.user,
+    user,
     loading,
-    isAuthenticated,
-    supabaseClient
+    isAuthenticated: !!user,
   };
 };
 
@@ -97,26 +139,36 @@ export const hasRoleAccess = (userRole: UserRole, requiredRole: UserRole): boole
 export const useAuthSignIn = () => {
   const [isLoading, setIsLoading] = useState(false);
   
-  const handleSignIn = async (email: string, password: string, callbackUrl?: string) => {
+  const handleSignIn = async (email: string, password: string, role?: string) => {
     setIsLoading(true);
     
     try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      });
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
       
-      if (result?.error) {
-        toast.error(result.error);
-        return { success: false, error: result.error };
+      // Fetch user data to check role
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (!userDoc.exists()) {
+        await firebaseSignOut(auth);
+        toast.error('User profile not found');
+        return { success: false, error: 'User profile not found' };
+      }
+      
+      const userData = userDoc.data();
+      
+      // If role is specified, check if the user has the correct role
+      if (role && userData.role !== role) {
+        await firebaseSignOut(auth);
+        toast.error(`You don't have ${role} access`);
+        return { success: false, error: `You don't have ${role} access` };
       }
       
       toast.success('Signed in successfully');
-      return { success: true };
+      return { success: true, user: { ...userData, id: user.uid } };
     } catch (error: any) {
-      toast.error('Authentication failed. Please try again.');
-      return { success: false, error: error.message };
+      const errorMessage = handleAuthError(error);
+      toast.error(errorMessage);
+      return { success: false, error: errorMessage };
     } finally {
       setIsLoading(false);
     }
@@ -135,7 +187,8 @@ export const useAuthSignOut = () => {
     setIsLoading(true);
     
     try {
-      await signOut({ redirect: false });
+      await firebaseSignOut(auth);
+      toast.success('Signed out successfully');
       return { success: true };
     } catch (error: any) {
       toast.error("Error signing out. Please try again.");

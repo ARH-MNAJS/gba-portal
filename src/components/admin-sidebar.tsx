@@ -1,10 +1,12 @@
+"use client";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 import { ThemeToggle } from "./theme-toggle";
-import { Home, Users, GamepadIcon, BarChartIcon, ChevronDown } from "lucide-react";
+import { Home, Users, GamepadIcon, BarChartIcon, ChevronDown, GraduationCap, Building2, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -19,7 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSignOut } from "./auth-sign-out";
 
 const sidebarNavItems = [
@@ -30,8 +32,25 @@ const sidebarNavItems = [
   },
   {
     title: "Users",
-    href: "/admin/user",
     icon: Users,
+    submenu: true,
+    submenuItems: [
+      {
+        title: "Students",
+        href: "/admin/user/students",
+        icon: GraduationCap,
+      },
+      {
+        title: "College",
+        href: "/admin/user/college",
+        icon: Building2,
+      },
+      {
+        title: "Admin",
+        href: "/admin/user/admin",
+        icon: ShieldCheck,
+      },
+    ],
   },
   {
     title: "Assessments",
@@ -61,11 +80,25 @@ interface AdminSidebarProps {
 
 export function AdminSidebar({ className }: AdminSidebarProps) {
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { user } = useSession();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
   const signOutHandler = useSignOut();
+
+  // Auto-open submenu based on current path
+  useEffect(() => {
+    for (const item of sidebarNavItems) {
+      if (item.submenu && item.submenuItems) {
+        for (const subitem of item.submenuItems) {
+          if (pathname.startsWith(subitem.href)) {
+            setOpenSubmenu(item.title);
+            break;
+          }
+        }
+      }
+    }
+  }, [pathname]);
 
   const toggleSubmenu = (title: string) => {
     setOpenSubmenu(openSubmenu === title ? null : title);
@@ -107,7 +140,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                 onClick={() => setOpen(false)}
               >
                 <span className="text-xl font-bold">
-                  <span className="text-primary">C</span>ogni<span className="text-primary">C</span>ore
+                  GBA Portal
                 </span>
               </Link>
             </div>
@@ -120,9 +153,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                         <button
                           className={cn(
                             "flex w-full items-center justify-between rounded-lg px-3 py-2 transition-all hover:text-primary",
-                            openSubmenu === item.title
-                              ? "bg-accent text-primary"
-                              : "text-muted-foreground"
+                            "text-muted-foreground"
                           )}
                           onClick={() => toggleSubmenu(item.title)}
                         >
@@ -141,7 +172,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                                 onClick={() => setOpen(false)}
                                 className={cn(
                                   "block rounded-lg px-3 py-2 transition-all hover:text-primary",
-                                  pathname === subitem.href
+                                  pathname.startsWith(subitem.href)
                                     ? "bg-accent text-primary"
                                     : "text-muted-foreground"
                                 )}
@@ -179,7 +210,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                     <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                       <Avatar className="h-8 w-8">
                         <AvatarFallback>
-                          {session?.user?.email?.charAt(0).toUpperCase() || "A"}
+                          {user?.email?.charAt(0).toUpperCase() || "A"}
                         </AvatarFallback>
                       </Avatar>
                     </Button>
@@ -187,8 +218,8 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                   <DropdownMenuContent align="end">
                     <div className="flex items-center justify-start gap-2 p-2">
                       <div className="flex flex-col space-y-1 leading-none">
-                        {session?.user?.email && (
-                          <p className="text-sm font-medium">{session.user.email}</p>
+                        {user?.email && (
+                          <p className="text-sm font-medium">{user.email}</p>
                         )}
                         <p className="text-xs text-muted-foreground">Admin</p>
                       </div>
@@ -225,7 +256,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
         <div className="flex h-14 items-center border-b px-4">
           <Link href="/" className="flex items-center">
             <span className="text-xl font-bold">
-              <span className="text-primary">C</span>ogni<span className="text-primary">C</span>ore
+              GBA Portal
             </span>
           </Link>
         </div>
@@ -238,9 +269,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                     <button
                       className={cn(
                         "flex w-full items-center justify-between rounded-lg px-3 py-2 transition-all hover:text-primary",
-                        openSubmenu === item.title
-                          ? "bg-accent text-primary"
-                          : "text-muted-foreground"
+                        "text-muted-foreground"
                       )}
                       onClick={() => toggleSubmenu(item.title)}
                     >
@@ -258,7 +287,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                             href={subitem.href}
                             className={cn(
                               "block rounded-lg px-3 py-2 transition-all hover:text-primary",
-                              pathname === subitem.href
+                              pathname.startsWith(subitem.href)
                                 ? "bg-accent text-primary"
                                 : "text-muted-foreground"
                             )}
@@ -295,7 +324,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                   <Avatar className="h-8 w-8">
                     <AvatarFallback>
-                      {session?.user?.email?.charAt(0).toUpperCase() || "A"}
+                      {user?.email?.charAt(0).toUpperCase() || "A"}
                     </AvatarFallback>
                   </Avatar>
                 </Button>
@@ -303,8 +332,8 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
               <DropdownMenuContent align="end">
                 <div className="flex items-center justify-start gap-2 p-2">
                   <div className="flex flex-col space-y-1 leading-none">
-                    {session?.user?.email && (
-                      <p className="text-sm font-medium">{session.user.email}</p>
+                    {user?.email && (
+                      <p className="text-sm font-medium">{user.email}</p>
                     )}
                     <p className="text-xs text-muted-foreground">Admin</p>
                   </div>

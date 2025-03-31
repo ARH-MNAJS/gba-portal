@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 import { toast } from "sonner";
 import { useState } from "react";
 
 export default function NotFound() {
   const router = useRouter();
-  const { data: session } = useSession();
+  const { user } = useSession();
   const [isNavigating, setIsNavigating] = useState(false);
 
   // Go back properly, with navigation state tracking to prevent double clicks
@@ -30,9 +30,9 @@ export default function NotFound() {
       }, 1000);
     } else {
       // If no history, go to home or user dashboard
-      if (session?.user) {
+      if (user) {
         toast.info("Returning to your dashboard");
-        router.push(`/${session.user.role}`);
+        router.push(`/${user.role}`);
       } else {
         router.push('/');
       }

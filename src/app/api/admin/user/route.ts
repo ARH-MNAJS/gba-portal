@@ -1,286 +1,330 @@
-import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { NextRequest, NextResponse } from 'next/server';
+import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import * as bcrypt from 'bcryptjs';
+import { UserRole } from '@/lib/auth-utils';
 
-// API handler for creating users
-export async function POST(request: Request) {
+// Ensure only admins can access this route
+async function validateAdmin(request: NextRequest) {
   try {
-    // Check admin authentication
-    const session = await getServerSession(authOptions);
+    const authHeader = request.headers.get('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return {
+        valid: false,
+        error: 'Unauthorized - Missing or invalid auth header'
+      };
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decodedToken = await adminAuth.verifyIdToken(token);
     
-    if (!session || session.user.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    if (!decodedToken) {
+      return {
+        valid: false,
+        error: 'Unauthorized - Invalid token'
+      };
     }
     
-    const userData = await request.json();
-    
-    // Validate the request body
-    if (!userData.email || !userData.password || !userData.name || !userData.role) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    // Check user role in Firestore
+    const userDoc = await adminDb.collection('users').doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return {
+        valid: false,
+        error: 'Unauthorized - User not found'
+      };
     }
     
-    // Create the user in Supabase Auth
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: userData.email,
-      password: userData.password,
-      email_confirm: true,
-      user_metadata: {
-        name: userData.name,
-        role: userData.role,
-      },
+    const userData = userDoc.data();
+    if (userData?.role !== 'admin') {
+      return {
+        valid: false,
+        error: 'Unauthorized - Insufficient permissions'
+      };
+    }
+    
+    return {
+      valid: true,
+      userId: decodedToken.uid
+    };
+  } catch (error) {
+    console.error('Error validating admin access:', error);
+    return {
+      valid: false,
+      error: 'Unauthorized - Authentication failed'
+    };
+  }
+}
+
+// Create a new user with role
+export async function POST(request: NextRequest) {
+  const authCheck = await validateAdmin(request);
+  if (!authCheck.valid) {
+    return NextResponse.json(
+      { error: authCheck.error },
+      { status: 401 }
+    );
+  }
+  
+  try {
+    const body = await request.json();
+    const { email, password, role, name, phone, college, branch, year } = body;
+    
+    // Basic validation
+    if (!email || !password || !role || !name) {
+      return NextResponse.json(
+        { error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if user already exists
+    try {
+      await adminAuth.getUserByEmail(email);
+      return NextResponse.json(
+        { error: 'Email already in use' },
+        { status: 409 }
+      );
+    } catch (error: any) {
+      // If error is user-not-found, that's good (continue with creation)
+      if (error.code !== 'auth/user-not-found') {
+        throw error;
+      }
+    }
+    
+    // Create the user in Firebase Auth
+    const userRecord = await adminAuth.createUser({
+      email,
+      password,
+      emailVerified: false,
     });
     
-    if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 400 });
-    }
+    const userId = userRecord.uid;
+    const timestamp = new Date().toISOString();
     
-    if (!authData.user) {
-      return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
-    }
+    // Add user to users collection
+    await adminDb.collection('users').doc(userId).set({
+      email: email.toLowerCase(),
+      role,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
     
-    // Add to users table
-    const { error: userError } = await supabaseAdmin
-      .from('users')
-      .upsert({
-        id: authData.user.id,
-        email: userData.email,
-        role: userData.role,
-      });
+    // Add role-specific profile
+    if (role === 'student') {
+      if (!college || !branch || !year) {
+        // Roll back user creation
+        await adminAuth.deleteUser(userId);
+        
+        return NextResponse.json(
+          { error: 'Missing required student fields' },
+          { status: 400 }
+        );
+      }
       
-    if (userError) {
-      // Rollback: delete the auth user if we fail to insert into users table
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      return NextResponse.json({ error: userError.message }, { status: 500 });
+      await adminDb.collection('students').doc(userId).set({
+        name,
+        email: email.toLowerCase(),
+        phone: phone || '',
+        college,
+        branch,
+        year,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    } else if (role === 'admin') {
+      await adminDb.collection('admins').doc(userId).set({
+        name,
+        email: email.toLowerCase(),
+        phone: phone || '',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    } else if (role === 'college') {
+      if (!college) {
+        // Roll back user creation
+        await adminAuth.deleteUser(userId);
+        
+        return NextResponse.json(
+          { error: 'Missing college name for college role' },
+          { status: 400 }
+        );
+      }
+      
+      await adminDb.collection('colleges').doc(userId).set({
+        name,
+        email: email.toLowerCase(),
+        phone: phone || '',
+        college,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
     }
     
-    // Add role-specific data
-    if (userData.role === 'student') {
-      const { error: studentError } = await supabaseAdmin
-        .from('students')
-        .upsert({
-          id: authData.user.id,
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone || '',
-          college: userData.college || '',
-          branch: userData.branch || '',
-          year: userData.year || '',
-        });
-        
-      if (studentError) {
-        return NextResponse.json({ error: studentError.message }, { status: 500 });
-      }
-    } else if (userData.role === 'admin') {
-      const { error: adminError } = await supabaseAdmin
-        .from('admins')
-        .upsert({
-          id: authData.user.id,
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone || '',
-        });
-        
-      if (adminError) {
-        return NextResponse.json({ error: adminError.message }, { status: 500 });
-      }
-    } else if (userData.role === 'college') {
-      const { error: collegeError } = await supabaseAdmin
-        .from('colleges')
-        .upsert({
-          id: authData.user.id,
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone || '',
-        });
-        
-      if (collegeError) {
-        return NextResponse.json({ error: collegeError.message }, { status: 500 });
-      }
-    }
-    
-    return NextResponse.json({ success: true, user: authData.user });
+    return NextResponse.json({
+      id: userId,
+      email,
+      role,
+      created: true
+    });
   } catch (error: any) {
     console.error('Error creating user:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
-  }
-}
-
-// API handler for getting users
-export async function GET(request: Request) {
-  try {
-    // Check admin authentication
-    const session = await getServerSession(authOptions);
-    
-    if (!session || session.user.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
-    }
-    
-    const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const perPage = parseInt(searchParams.get('perPage') || '10');
-    
-    const from = (page - 1) * perPage;
-    const to = from + perPage - 1;
-    
-    // Get count of users
-    const { count, error: countError } = await supabaseAdmin
-      .from('users')
-      .select('*', { count: 'exact', head: true });
-      
-    if (countError) {
-      return NextResponse.json({ error: countError.message }, { status: 500 });
-    }
-    
-    // Get users for current page
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .select('id, email, role')
-      .range(from, to)
-      .order('email', { ascending: true });
-      
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    
-    // Enrich with additional data
-    const enrichedUsers = await Promise.all(
-      data.map(async (user) => {
-        let name = "";
-        let phone = "";
-        
-        if (user.role === "student") {
-          const { data: studentData } = await supabaseAdmin
-            .from('students')
-            .select('name, phone, college, branch, year')
-            .eq('id', user.id)
-            .single();
-            
-          if (studentData) {
-            return {
-              ...user,
-              name: studentData.name,
-              phone: studentData.phone,
-              college: studentData.college,
-              branch: studentData.branch,
-              year: studentData.year,
-            };
-          }
-        } else if (user.role === "admin") {
-          const { data: adminData } = await supabaseAdmin
-            .from('admins')
-            .select('name, phone')
-            .eq('id', user.id)
-            .single();
-            
-          if (adminData) {
-            return {
-              ...user,
-              name: adminData.name,
-              phone: adminData.phone || '',
-            };
-          }
-        } else if (user.role === "college") {
-          const { data: collegeData } = await supabaseAdmin
-            .from('colleges')
-            .select('name, phone')
-            .eq('id', user.id)
-            .single();
-            
-          if (collegeData) {
-            return {
-              ...user,
-              name: collegeData.name,
-              phone: collegeData.phone || '',
-            };
-          }
-        }
-        
-        return {
-          ...user,
-          name,
-          phone,
-        };
-      })
+    return NextResponse.json(
+      { error: error.message || 'Failed to create user' },
+      { status: 500 }
     );
-    
-    return NextResponse.json({ 
-      users: enrichedUsers, 
-      totalPages: Math.ceil((count || 0) / perPage),
-      totalUsers: count
-    });
-  } catch (error: any) {
-    console.error('Error fetching users:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
 
-// API handler for deleting a user
-export async function DELETE(request: Request) {
+// Get list of users or a specific user
+export async function GET(request: NextRequest) {
+  const authCheck = await validateAdmin(request);
+  if (!authCheck.valid) {
+    return NextResponse.json(
+      { error: authCheck.error },
+      { status: 401 }
+    );
+  }
+  
   try {
-    // Check admin authentication
-    const session = await getServerSession(authOptions);
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get('id');
+    const role = searchParams.get('role') as UserRole | null;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = Math.min(parseInt(searchParams.get('limit') || '10'), 50); // Cap at 50
     
-    if (!session || session.user.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    if (userId) {
+      // Get a specific user
+      const userDoc = await adminDb.collection('users').doc(userId).get();
+      
+      if (!userDoc.exists) {
+        return NextResponse.json(
+          { error: 'User not found' },
+          { status: 404 }
+        );
+      }
+      
+      const userData = userDoc.data() || {};
+      const userRole = userData.role as UserRole;
+      
+      let profileData = {};
+      
+      if (userRole === 'student') {
+        const studentDoc = await adminDb.collection('students').doc(userId).get();
+        profileData = studentDoc.exists ? studentDoc.data() || {} : {};
+      } else if (userRole === 'admin') {
+        const adminDoc = await adminDb.collection('admins').doc(userId).get();
+        profileData = adminDoc.exists ? adminDoc.data() || {} : {};
+      } else if (userRole === 'college') {
+        const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
+        profileData = collegeDoc.exists ? collegeDoc.data() || {} : {};
+      }
+      
+      return NextResponse.json({
+        id: userId,
+        ...userData,
+        ...profileData
+      });
+    } else {
+      // Get paginated list of users
+      let query = adminDb.collection('users');
+      
+      // Apply role filter if specified
+      if (role) {
+        query = query.where('role', '==', role);
+      }
+      
+      // Get total count (this is not efficient in Firestore but works for small datasets)
+      const countSnapshot = await query.get();
+      const totalUsers = countSnapshot.size;
+      
+      // Apply pagination
+      const offset = (page - 1) * limit;
+      const snapshot = await query.orderBy('createdAt', 'desc').limit(limit).offset(offset).get();
+      
+      const users = [];
+      for (const doc of snapshot.docs) {
+        users.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      }
+      
+      return NextResponse.json({
+        users,
+        pagination: {
+          page,
+          limit,
+          total: totalUsers,
+          totalPages: Math.ceil(totalUsers / limit)
+        }
+      });
     }
-    
+  } catch (error: any) {
+    console.error('Error getting users:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to get users' },
+      { status: 500 }
+    );
+  }
+}
+
+// Delete a user
+export async function DELETE(request: NextRequest) {
+  const authCheck = await validateAdmin(request);
+  if (!authCheck.valid) {
+    return NextResponse.json(
+      { error: authCheck.error },
+      { status: 401 }
+    );
+  }
+  
+  try {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('id');
     
     if (!userId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'User ID is required' },
+        { status: 400 }
+      );
     }
     
-    // Get user to determine role
-    const { data: userData, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-      
-    if (userError) {
-      return NextResponse.json({ error: userError.message }, { status: 404 });
+    // Get user data to determine collection to delete from
+    const userDoc = await adminDb.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
     }
     
-    // Delete from role-specific table
-    if (userData.role === 'student') {
-      await supabaseAdmin
-        .from('students')
-        .delete()
-        .eq('id', userId);
-    } else if (userData.role === 'admin') {
-      await supabaseAdmin
-        .from('admins')
-        .delete()
-        .eq('id', userId);
-    } else if (userData.role === 'college') {
-      await supabaseAdmin
-        .from('colleges')
-        .delete()
-        .eq('id', userId);
+    const userData = userDoc.data() || {};
+    const userRole = userData.role as UserRole;
+    
+    // Delete from role-specific collection
+    if (userRole === 'student') {
+      await adminDb.collection('students').doc(userId).delete();
+    } else if (userRole === 'admin') {
+      await adminDb.collection('admins').doc(userId).delete();
+    } else if (userRole === 'college') {
+      await adminDb.collection('colleges').doc(userId).delete();
     }
     
-    // Delete from users table
-    const { error: deleteUserError } = await supabaseAdmin
-      .from('users')
-      .delete()
-      .eq('id', userId);
-      
-    if (deleteUserError) {
-      return NextResponse.json({ error: deleteUserError.message }, { status: 500 });
-    }
+    // Delete from users collection
+    await adminDb.collection('users').doc(userId).delete();
     
-    // Delete from auth
-    const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    // Delete from Firebase Auth
+    await adminAuth.deleteUser(userId);
     
-    if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 500 });
-    }
-    
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
   } catch (error: any) {
     console.error('Error deleting user:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message || 'Failed to delete user' },
+      { status: 500 }
+    );
   }
 } 

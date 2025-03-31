@@ -2,7 +2,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 import { ThemeToggle } from "./theme-toggle";
 import { Home, Book, GamepadIcon, BarChart3Icon } from "lucide-react";
 import {
@@ -47,7 +47,7 @@ interface StudentSidebarProps {
 
 export function StudentSidebar({ className }: StudentSidebarProps) {
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { user } = useSession();
   const signOutHandler = useSignOut();
 
   return (
@@ -91,7 +91,7 @@ export function StudentSidebar({ className }: StudentSidebarProps) {
               <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback>
-                    {session?.user?.email?.charAt(0).toUpperCase() || "S"}
+                    {user?.email?.charAt(0).toUpperCase() || "S"}
                   </AvatarFallback>
                 </Avatar>
               </Button>
@@ -99,8 +99,8 @@ export function StudentSidebar({ className }: StudentSidebarProps) {
             <DropdownMenuContent align="end">
               <div className="flex items-center justify-start gap-2 p-2">
                 <div className="flex flex-col space-y-1 leading-none">
-                  {session?.user?.email && (
-                    <p className="text-sm font-medium">{session.user.email}</p>
+                  {user?.email && (
+                    <p className="text-sm font-medium">{user.email}</p>
                   )}
                   <p className="text-xs text-muted-foreground">Student</p>
                 </div>

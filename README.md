@@ -1,85 +1,80 @@
-# CogniCore: Game-Based Assessment Platform
+# GBA Portal
 
-A web application for cognitive assessment through game-based exercises, built with Next.js, Tailwind CSS, and Supabase.
+A web application for cognitive assessment through game-based exercises, built with Next.js, Tailwind CSS, and Firebase.
 
-## Authentication System
+## Authentication
 
-This application uses NextAuth.js with Supabase for authentication. The integration offers:
+This application uses Firebase Authentication for user management and security. The integration offers:
 
-- Secure JWT-based authentication
-- Role-based access control
-- Session management across tabs and page refreshes
-- Protected routes based on user roles
-
-## Setup Instructions
-
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Set up your environment variables:
-   Copy `.env.local.example` to `.env.local` and fill in your Supabase and NextAuth details:
-   ```
-   # Supabase
-   NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-
-   # NextAuth
-   NEXTAUTH_URL=http://localhost:3000
-   NEXTAUTH_SECRET=your-generated-secret
-   ```
-   
-   You can generate a secure secret with:
-   ```bash
-   openssl rand -base64 32
-   ```
-
-4. Run the development server:
-   ```bash
-   npm run dev
-   ```
-
-## Database Schema
-
-The application requires the following tables in your Supabase database:
-
-1. `users` - Stores basic user information and their role
-   - `id` (primary key, matches Supabase Auth UUID)
-   - `email` (string, unique)
-   - `role` (enum: 'student', 'admin', 'college')
-
-2. `students` - Student-specific information
-   - `id` (foreign key to users.id)
-   - `name` (string)
-   - `email` (string)
-   - Additional student-specific fields
-
-3. `admins` - Admin-specific information
-   - `id` (foreign key to users.id)
-   - `name` (string)
-   - `email` (string)
-
-4. `colleges` - College-specific information
-   - `id` (foreign key to users.id)
-   - `name` (string)
-   - `email` (string)
-   - `college` (string)
+- Email/password-based authentication
+- Role-based access control (admin, student, college)
+- Protected routes
+- Custom authentication flows
 
 ## Features
 
-- Self-authenticating dashboard pages for different user roles
-- Clean user interface with dark mode support
-- Centralized authentication logic using NextAuth.js
-- Secure session storage and management
-- Protected routes based on user roles
+- **Authentication**: Secure login and registration
+- **Role-based access**: Different dashboards for students, colleges, and admins
+- **Admin dashboard**: Manage users, view reports, configure system
+- **Student dashboard**: Take assessments, view progress, access reports
+- **College dashboard**: View student performance, generate reports
+- **Database**: Firebase Firestore database for storing user information and results
 
-## Technology Stack
+## Setup
 
-- **Frontend**: Next.js, React, TailwindCSS, shadcn/ui
-- **Authentication**: NextAuth.js with Supabase provider
-- **Database**: Supabase (PostgreSQL)
-- **Styling**: Tailwind CSS with custom theming
+1. Clone the repository
+2. Install dependencies:
+```
+npm install
+```
+3. Copy `.env.local.example` to `.env.local` and fill in your Firebase details:
+```
+# Firebase
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+...
+```
+4. Start the development server:
+```
+npm run dev
+```
+5. Navigate to the Firebase setup page `/api/db-setup` to initialize the database
+
+## Access Demo Accounts
+
+After setting up the database, you can access the system using:
+
+**Admin Account**
+- Email: admin@example.com
+- Password: admin123
+
+## Deployment
+
+You can deploy this application to Vercel with minimal configuration.
+
+1. Connect your GitHub repository to Vercel
+2. Set up environment variables
+3. Deploy
+
+## Tech Stack
+
+- **Frontend**: Next.js with App Router, React, Tailwind CSS
+- **UI Components**: Shadcn UI
+- **Authentication**: Firebase Authentication
+- **Database**: Firebase Firestore
+- **State Management**: React hooks and context API
+- **Forms**: React Hook Form with Zod validation
+- **Styling**: TailwindCSS with typography plugin and animations
+
+## Architecture
+
+- **Authentication Logic**: Centralized authentication with Firebase Authentication
+- **Component Structure**: Reusable React components with clear separation of concerns
+- **Data Handling**: Server actions for data fetching and mutation
+- **Security**: Role-based access control and route protection
+- **Performance**: Optimized bundle sizes and code splitting
+- **Database**: Structured Firestore collections
 
 ## Getting Started
 

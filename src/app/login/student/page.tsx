@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signIn } from "next-auth/react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -14,6 +13,9 @@ import { toast } from "sonner";
 import { safeRedirect } from "@/lib/auth-utils";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
+import { auth, db } from "@/lib/firebase";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 
 const formSchema = z.object({
   email: z.string().email({
@@ -44,28 +46,26 @@ export default function StudentLoginPage() {
     try {
       console.log("Attempting to sign in as student:", values.email);
       
-      const result = await signIn("credentials", {
-        email: values.email,
-        password: values.password,
-        // Pass role for routing purposes after successful login
-        role: "student",
-        redirect: false,
-      });
-
-      console.log("Sign in result:", result ? JSON.stringify(result) : "no result");
-
-      if (result?.error) {
-        console.error("Login error:", result.error);
-        setErrorMessage(result.error);
-        toast.error(result.error || "Login failed");
-        return;
+      // Sign in with Firebase
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        values.email,
+        values.password
+      );
+      
+      // Check if user has the student role
+      const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+      
+      if (!userDoc.exists()) {
+        throw new Error("User record not found");
       }
-
-      if (!result?.ok) {
-        console.error("Login not successful but no error provided");
-        setErrorMessage("Login failed. Please try again.");
-        toast.error("Login failed. Please try again.");
-        return;
+      
+      const userData = userDoc.data();
+      
+      if (userData.role !== 'student') {
+        // Sign out if role is not student
+        await auth.signOut();
+        throw new Error("You don't have access as a student");
       }
 
       console.log("Login successful, redirecting to student dashboard");
@@ -75,10 +75,22 @@ export default function StudentLoginPage() {
       setTimeout(() => {
         router.push("/student");
       }, 500);
-    } catch (error) {
-      console.error("Unexpected error during login:", error);
-      setErrorMessage("An unexpected error occurred");
-      toast.error("Something went wrong. Please try again.");
+    } catch (error: any) {
+      console.error("Login error:", error);
+      
+      // Handle Firebase auth errors
+      let errorMsg = "Login failed. Please check your credentials.";
+      
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        errorMsg = "Invalid email or password";
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMsg = "Too many failed login attempts. Please try again later.";
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
+      setErrorMessage(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setIsLoading(false);
     }

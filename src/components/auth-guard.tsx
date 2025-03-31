@@ -2,9 +2,10 @@
 
 import { useEffect, useState, ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { UserRole } from "@/lib/supabase";
+import { UserRole } from "@/lib/auth-utils";
 import { toast } from "sonner";
-import { hasRoleAccess, getRoleRedirectPath, useRequireAuth, safeRedirect } from "@/lib/auth-utils";
+import { hasRoleAccess, getRoleRedirectPath, safeRedirect } from "@/lib/auth-utils";
+import { useSession } from "@/providers/session-provider";
 
 interface AuthGuardProps {
   children: ReactNode;
@@ -19,7 +20,7 @@ interface AuthGuardProps {
 export const AuthGuard = ({ children, requiredRole, fallback }: AuthGuardProps) => {
   const [authorized, setAuthorized] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
-  const { user, loading, isAuthenticated } = useRequireAuth();
+  const { user, loading } = useSession();
   const router = useRouter();
 
   useEffect(() => {
@@ -29,7 +30,7 @@ export const AuthGuard = ({ children, requiredRole, fallback }: AuthGuardProps) 
     // Only check auth once the auth context has finished loading
     if (!loading) {
       // If user is authenticated but doesn't have the required role
-      if (isAuthenticated && user?.role && !hasRoleAccess(user.role, requiredRole)) {
+      if (user && user.role && !hasRoleAccess(user.role, requiredRole)) {
         // Prevent state updates if component unmounts during this check
         const redirectTimeoutId = setTimeout(() => {
           toast.error(`You don't have access to the ${requiredRole} dashboard`);
@@ -42,7 +43,7 @@ export const AuthGuard = ({ children, requiredRole, fallback }: AuthGuardProps) 
       }
       
       // If no user, redirect to login
-      if (!isAuthenticated) {
+      if (!user) {
         const loginTimeoutId = setTimeout(() => {
           toast.error("Please login to access your dashboard");
           safeRedirect(router, '/login');
@@ -66,7 +67,7 @@ export const AuthGuard = ({ children, requiredRole, fallback }: AuthGuardProps) 
     return () => {
       timeoutIds.forEach(id => clearTimeout(id));
     };
-  }, [user, loading, router, isAuthenticated, requiredRole]);
+  }, [user, loading, router, requiredRole]);
 
   // Show loading or custom fallback component while checking auth
   if (!authChecked || loading || !authorized) {

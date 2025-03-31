@@ -13,10 +13,10 @@ import {
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { User } from "lucide-react";
 import { useSignOut } from "./auth-sign-out";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/providers/session-provider";
 
 export function Header() {
-  const { data: session } = useSession();
+  const { user } = useSession();
   const signOutHandler = useSignOut();
 
   return (
@@ -31,13 +31,13 @@ export function Header() {
         </div>
         <div className="flex items-center gap-4">
           <ThemeToggle />
-          {session?.user ? (
+          {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                   <Avatar className="h-9 w-9">
                     <AvatarFallback>
-                      {session.user.email?.charAt(0).toUpperCase() || "U"}
+                      {user.email?.charAt(0).toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
                 </Button>
@@ -45,11 +45,11 @@ export function Header() {
               <DropdownMenuContent align="end">
                 <div className="flex items-center justify-start gap-2 p-2">
                   <div className="flex flex-col space-y-1 leading-none">
-                    {session.user.email && (
-                      <p className="text-sm font-medium">{session.user.email}</p>
+                    {user.email && (
+                      <p className="text-sm font-medium">{user.email}</p>
                     )}
                     <p className="text-xs text-muted-foreground capitalize">
-                      {session.user.role}
+                      {user.role}
                     </p>
                   </div>
                 </div>
@@ -58,7 +58,7 @@ export function Header() {
                   <Link href="/profile">Profile</Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href={`/${session.user.role}`}>Dashboard</Link>
+                  <Link href={`/${user.role}`}>Dashboard</Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

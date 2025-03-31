@@ -7,25 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
-import { useSession } from "next-auth/react";
-import { useRequireAuth } from "@/lib/auth-utils";
+import { useSession } from "@/providers/session-provider";
 
 export default function LoginPage() {
-  const { session, loading } = useRequireAuth();
+  const { user, loading } = useSession();
   const router = useRouter();
   const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
     // If user is authenticated, redirect to their dashboard
     if (!loading) {
-      if (session?.user) {
-        router.push(`/${session.user.role}`);
+      if (user) {
+        router.push(`/${user.role}`);
       } else {
         // User not authenticated, show login options
         setPageLoading(false);
       }
     }
-  }, [session, loading, router]);
+  }, [user, loading, router]);
 
   if (loading || pageLoading) {
     return (
