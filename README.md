@@ -1,4 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CogniCore: Game-Based Assessment Platform
+
+A web application for cognitive assessment through game-based exercises, built with Next.js, Tailwind CSS, and Supabase.
+
+## Authentication System
+
+This application uses NextAuth.js with Supabase for authentication. The integration offers:
+
+- Secure JWT-based authentication
+- Role-based access control
+- Session management across tabs and page refreshes
+- Protected routes based on user roles
+
+## Setup Instructions
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Set up your environment variables:
+   Copy `.env.local.example` to `.env.local` and fill in your Supabase and NextAuth details:
+   ```
+   # Supabase
+   NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+
+   # NextAuth
+   NEXTAUTH_URL=http://localhost:3000
+   NEXTAUTH_SECRET=your-generated-secret
+   ```
+   
+   You can generate a secure secret with:
+   ```bash
+   openssl rand -base64 32
+   ```
+
+4. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+## Database Schema
+
+The application requires the following tables in your Supabase database:
+
+1. `users` - Stores basic user information and their role
+   - `id` (primary key, matches Supabase Auth UUID)
+   - `email` (string, unique)
+   - `role` (enum: 'student', 'admin', 'college')
+
+2. `students` - Student-specific information
+   - `id` (foreign key to users.id)
+   - `name` (string)
+   - `email` (string)
+   - Additional student-specific fields
+
+3. `admins` - Admin-specific information
+   - `id` (foreign key to users.id)
+   - `name` (string)
+   - `email` (string)
+
+4. `colleges` - College-specific information
+   - `id` (foreign key to users.id)
+   - `name` (string)
+   - `email` (string)
+   - `college` (string)
+
+## Features
+
+- Self-authenticating dashboard pages for different user roles
+- Clean user interface with dark mode support
+- Centralized authentication logic using NextAuth.js
+- Secure session storage and management
+- Protected routes based on user roles
+
+## Technology Stack
+
+- **Frontend**: Next.js, React, TailwindCSS, shadcn/ui
+- **Authentication**: NextAuth.js with Supabase provider
+- **Database**: Supabase (PostgreSQL)
+- **Styling**: Tailwind CSS with custom theming
 
 ## Getting Started
 
