@@ -13,7 +13,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "CogniCore | Game-Based Assessments",
+  title: "XcelIQ | Game-Based Assessments",
   description: "Enhance your recruitment with our game-based assessments platform",
 };
 
@@ -25,7 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans`}>
-        <ThemeProvider defaultTheme="system" storageKey="cognicore-theme">
+        <ThemeProvider defaultTheme="system" storageKey="xceliq-theme">
           <SessionProvider>
             {children}
             <Toaster position="top-right" />

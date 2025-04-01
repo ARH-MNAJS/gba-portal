@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Admin Dashboard | CogniCore",
+  title: "Admin Dashboard | XcelIQ",
   description: "Admin dashboard for game-based assessments platform",
 }; 

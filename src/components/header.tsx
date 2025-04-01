@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { User } from "lucide-react";
+import { User, Brain } from "lucide-react";
 import { useSignOut } from "./auth-sign-out";
 import { useSession } from "@/providers/session-provider";
 
@@ -23,9 +23,10 @@ export function Header() {
     <header className="sticky top-0 z-40 border-b bg-background w-full">
       <div className="container flex h-16 items-center justify-between py-4 max-w-7xl mx-auto px-4">
         <div className="flex items-center gap-2">
-          <Link href="/" className="flex items-center">
+          <Link href="/" className="flex items-center gap-2">
+            <Brain className="h-6 w-6 text-black dark:text-white" />
             <span className="text-xl font-bold">
-              <span className="text-primary">C</span>ogni<span className="text-primary">C</span>ore
+              <span className="text-black dark:text-white font-bold">X</span>cel<span className="bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent animate-gradient">IQ</span>
             </span>
           </Link>
         </div>
