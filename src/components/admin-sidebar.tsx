@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { useSession } from "@/providers/session-provider";
 import { ThemeToggle } from "./theme-toggle";
-import { Home, Users, GamepadIcon, BarChartIcon, ChevronDown, GraduationCap, Building2, ShieldCheck } from "lucide-react";
+import { Home, Users, GamepadIcon, BarChartIcon, ChevronDown, GraduationCap, Building2, ShieldCheck, Brain } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -51,6 +51,11 @@ const sidebarNavItems = [
         icon: ShieldCheck,
       },
     ],
+  },
+  {
+    title: "Practice",
+    href: "/admin/practice",
+    icon: Brain,
   },
   {
     title: "Assessments",

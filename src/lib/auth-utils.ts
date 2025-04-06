@@ -20,6 +20,9 @@ export interface User {
   email: string;
   role: UserRole;
   name?: string;
+  college?: string;
+  branch?: string;
+  year?: string;
 }
 
 /**

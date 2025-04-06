@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import * as bcrypt from 'bcryptjs';
-import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { adminAuth, adminDb, serializeFirestoreData } from '@/lib/firebase-admin';
 import { UserRole } from '@/lib/auth-utils';
 
 /**
@@ -35,7 +35,7 @@ export async function fetchUsers(page: number = 1, perPage: number = 10, role?: 
     // Get user data with additional details
     const users = [];
     for (const doc of userSnapshot.docs) {
-      const userData = doc.data();
+      const userData = serializeFirestoreData(doc.data());
       const userId = doc.id;
       let additionalData = {};
       
@@ -43,17 +43,17 @@ export async function fetchUsers(page: number = 1, perPage: number = 10, role?: 
       if (userData.role === 'student') {
         const studentDoc = await adminDb.collection('students').doc(userId).get();
         if (studentDoc.exists) {
-          additionalData = studentDoc.data() || {};
+          additionalData = serializeFirestoreData(studentDoc.data() || {});
         }
       } else if (userData.role === 'admin') {
         const adminDoc = await adminDb.collection('admins').doc(userId).get();
         if (adminDoc.exists) {
-          additionalData = adminDoc.data() || {};
+          additionalData = serializeFirestoreData(adminDoc.data() || {});
         }
       } else if (userData.role === 'college') {
         const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
         if (collegeDoc.exists) {
-          additionalData = collegeDoc.data() || {};
+          additionalData = serializeFirestoreData(collegeDoc.data() || {});
         }
       }
       
@@ -87,7 +87,7 @@ export async function fetchUserById(userId: string) {
       throw new Error('User not found');
     }
     
-    const userData = userDoc.data() || {};
+    const userData = serializeFirestoreData(userDoc.data() || {});
     let detailedUser = {
       id: userId,
       email: userData.email || '',
@@ -105,7 +105,7 @@ export async function fetchUserById(userId: string) {
     if (userData.role === 'student') {
       const studentDoc = await adminDb.collection('students').doc(userId).get();
       if (studentDoc.exists) {
-        const studentData = studentDoc.data() || {};
+        const studentData = serializeFirestoreData(studentDoc.data() || {});
         detailedUser = {
           ...detailedUser,
           name: studentData.name || '',
@@ -118,7 +118,7 @@ export async function fetchUserById(userId: string) {
     } else if (userData.role === 'admin') {
       const adminDoc = await adminDb.collection('admins').doc(userId).get();
       if (adminDoc.exists) {
-        const adminData = adminDoc.data() || {};
+        const adminData = serializeFirestoreData(adminDoc.data() || {});
         detailedUser = {
           ...detailedUser,
           name: adminData.name || '',
@@ -128,7 +128,7 @@ export async function fetchUserById(userId: string) {
     } else if (userData.role === 'college') {
       const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
       if (collegeDoc.exists) {
-        const collegeData = collegeDoc.data() || {};
+        const collegeData = serializeFirestoreData(collegeDoc.data() || {});
         detailedUser = {
           ...detailedUser,
           name: collegeData.name || '',

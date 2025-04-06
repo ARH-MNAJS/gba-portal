@@ -26,7 +26,7 @@ interface StudentDetails {
 
 export default function StudentDetailsPage({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const { user } = useSession();
+  const { user, loading: sessionLoading } = useSession();
   const [student, setStudent] = useState<StudentDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +37,11 @@ export default function StudentDetailsPage({ params }: { params: { id: string } 
   
   // First, get the college ID
   useEffect(() => {
+    // Skip this effect while the session is still loading
+    if (sessionLoading) {
+      return;
+    }
+    
     const getCollegeId = async () => {
       // If college ID is in the session, use it
       if (user?.college) {
@@ -45,74 +50,76 @@ export default function StudentDetailsPage({ params }: { params: { id: string } 
         return;
       }
       
+      // If user is not available after session loading is complete
+      if (!user) {
+        console.error("User not authenticated");
+        setError("Please sign in to view student details");
+        setLoading(false);
+        return;
+      }
+      
       // Otherwise, fetch from Firestore directly
-      if (user?.id) {
-        try {
-          console.log("Fetching college ID from Firestore for user ID:", user.id);
+      try {
+        console.log("Fetching college ID from Firestore for user ID:", user.id);
+        
+        // First try to get from colleges collection
+        const collegeDoc = await getDoc(doc(db, 'colleges', user.id));
+        
+        if (collegeDoc.exists()) {
+          const collegeData = collegeDoc.data();
+          console.log("College data found in Firestore:", collegeData);
           
-          // First try to get from colleges collection
-          const collegeDoc = await getDoc(doc(db, 'colleges', user.id));
-          
-          if (collegeDoc.exists()) {
-            const collegeData = collegeDoc.data();
-            console.log("College data found in Firestore:", collegeData);
-            
-            if (collegeData.college) {
-              console.log("College ID found in Firestore:", collegeData.college);
-              setCollegeId(collegeData.college);
-              return;
-            }
+          if (collegeData.college) {
+            console.log("College ID found in Firestore:", collegeData.college);
+            setCollegeId(collegeData.college);
+            return;
           }
+        }
+        
+        // If not found, try to get from users collection
+        const userDoc = await getDoc(doc(db, 'users', user.id));
+        
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          console.log("User data found in Firestore:", userData);
           
-          // If not found, try to get from users collection
-          const userDoc = await getDoc(doc(db, 'users', user.id));
-          
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            console.log("User data found in Firestore:", userData);
+          if (userData.role === 'college') {
+            console.log("User is a college admin");
             
-            if (userData.role === 'college') {
-              console.log("User is a college admin");
+            // Try to get college ID from other collections
+            const collegesQuery = query(
+              collection(db, 'colleges'),
+              where('email', '==', user.email)
+            );
+            
+            const querySnapshot = await getDocs(collegesQuery);
+            
+            if (!querySnapshot.empty) {
+              const collegeData = querySnapshot.docs[0].data();
+              console.log("College data found by email query:", collegeData);
               
-              // Try to get college ID from other collections
-              const collegesQuery = query(
-                collection(db, 'colleges'),
-                where('email', '==', user.email)
-              );
-              
-              const querySnapshot = await getDocs(collegesQuery);
-              
-              if (!querySnapshot.empty) {
-                const collegeData = querySnapshot.docs[0].data();
-                console.log("College data found by email query:", collegeData);
-                
-                if (collegeData.college) {
-                  console.log("College ID found by email query:", collegeData.college);
-                  setCollegeId(collegeData.college);
-                  return;
-                }
+              if (collegeData.college) {
+                console.log("College ID found by email query:", collegeData.college);
+                setCollegeId(collegeData.college);
+                return;
               }
             }
           }
-          
-          console.error("Failed to find college ID for user");
-          setError("Could not find college ID for your user account");
-          setLoading(false);
-          
-        } catch (err) {
-          console.error("Error fetching college data:", err);
-          setError("Error fetching college data");
-          setLoading(false);
         }
-      } else {
-        console.error("No user ID available");
-        setError("No user ID available in session");
+        
+        console.error("Failed to find college ID for user");
+        setError("Could not find college ID for your user account");
+        setLoading(false);
+        
+      } catch (err) {
+        console.error("Error fetching college data:", err);
+        setError("Error fetching college data");
         setLoading(false);
       }
     };
     
     getCollegeId();
-  }, [user]);
+  }, [user, sessionLoading]);
 
   // Then, load student details when we have the college ID
   useEffect(() => {
