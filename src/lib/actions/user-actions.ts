@@ -10,67 +10,95 @@ import { UserRole } from '@/lib/auth-utils';
  */
 export async function fetchUsers(page: number = 1, perPage: number = 10, role?: UserRole) {
   try {
-    // Query users collection
-    let usersQuery = adminDb.collection('users');
+    console.log(`[fetchUsers] Fetching users with role: ${role}, page: ${page}, perPage: ${perPage}`);
     
-    // Apply role filter if provided
-    if (role) {
-      usersQuery = usersQuery.where('role', '==', role);
+    // Ensure valid values for pagination
+    page = Math.max(1, page);
+    perPage = Math.min(Math.max(1, perPage), 100); // Limit to reasonable range
+    
+    // Directly query the role-specific collection instead of the users collection
+    let collectionName = 'users';
+    if (role === 'student') {
+      collectionName = 'students';
+    } else if (role === 'admin') {
+      collectionName = 'admins';
+    } else if (role === 'college') {
+      collectionName = 'colleges';
     }
+    
+    console.log(`[fetchUsers] Querying collection: ${collectionName}`);
     
     // Get total count for pagination
-    const totalSnapshot = await usersQuery.get();
-    const totalUsers = totalSnapshot.size;
-    
-    // Calculate pagination
-    const offset = (page - 1) * perPage;
-    
-    // Get paginated users
-    const userSnapshot = await usersQuery
-      .orderBy('email')
-      .limit(perPage)
-      .offset(offset)
-      .get();
-    
-    // Get user data with additional details
-    const users = [];
-    for (const doc of userSnapshot.docs) {
-      const userData = serializeFirestoreData(doc.data());
-      const userId = doc.id;
-      let additionalData = {};
+    try {
+      // Query the appropriate collection directly
+      const totalSnapshot = await adminDb.collection(collectionName).get();
+      const totalUsers = totalSnapshot.size;
+      console.log(`[fetchUsers] Total ${role}s found: ${totalUsers}`);
       
-      // Get role-specific data
-      if (userData.role === 'student') {
-        const studentDoc = await adminDb.collection('students').doc(userId).get();
-        if (studentDoc.exists) {
-          additionalData = serializeFirestoreData(studentDoc.data() || {});
-        }
-      } else if (userData.role === 'admin') {
-        const adminDoc = await adminDb.collection('admins').doc(userId).get();
-        if (adminDoc.exists) {
-          additionalData = serializeFirestoreData(adminDoc.data() || {});
-        }
-      } else if (userData.role === 'college') {
-        const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
-        if (collegeDoc.exists) {
-          additionalData = serializeFirestoreData(collegeDoc.data() || {});
-        }
+      // Calculate pagination
+      const offset = (page - 1) * perPage;
+      
+      // Get paginated users with error handling
+      let userSnapshot;
+      try {
+        userSnapshot = await adminDb.collection(collectionName)
+          .orderBy('email')
+          .limit(perPage)
+          .offset(offset)
+          .get();
+        
+        console.log(`[fetchUsers] ${role}s in current page: ${userSnapshot.size}`);
+      } catch (queryError) {
+        console.error(`[fetchUsers] Error in paginated query:`, queryError);
+        
+        // Fallback to getting all users and manual pagination
+        console.log(`[fetchUsers] Falling back to getting all ${role}s`);
+        userSnapshot = await adminDb.collection(collectionName).get();
+        
+        // Manual pagination
+        const allDocs = userSnapshot.docs;
+        const startIdx = Math.min(offset, allDocs.length);
+        const endIdx = Math.min(startIdx + perPage, allDocs.length);
+        
+        userSnapshot = {
+          docs: allDocs.slice(startIdx, endIdx),
+          size: endIdx - startIdx
+        };
+        
+        console.log(`[fetchUsers] Manual pagination results: ${userSnapshot.size} ${role}s`);
       }
       
-      users.push({
-        id: userId,
-        ...userData,
-        ...additionalData
-      });
+      // Get user data directly from role-specific collection
+      const users = [];
+      for (const doc of userSnapshot.docs) {
+        const roleData = serializeFirestoreData(doc.data());
+        const userId = doc.id;
+        console.log(`[fetchUsers] Processing ${role}: ${userId}`);
+        
+        // Create user object with the role-specific data
+        const user = {
+          id: userId,
+          role: role || 'unknown',
+          ...roleData
+        };
+        
+        console.log(`[fetchUsers] Adding ${role} to results: ${userId}`);
+        users.push(user);
+      }
+      
+      console.log(`[fetchUsers] Final ${role}s array length: ${users.length}`);
+      
+      return {
+        users,
+        totalPages: Math.max(1, Math.ceil(totalUsers / perPage)),
+        totalUsers
+      };
+    } catch (countError) {
+      console.error(`[fetchUsers] Error querying ${collectionName}:`, countError);
+      throw new Error(`Failed to fetch ${role}s`);
     }
-    
-    return {
-      users,
-      totalPages: Math.ceil(totalUsers / perPage),
-      totalUsers
-    };
   } catch (error: any) {
-    console.error('Error fetching users:', error);
+    console.error('[fetchUsers] Error fetching users:', error);
     throw new Error(error.message || 'Failed to fetch users');
   }
 }

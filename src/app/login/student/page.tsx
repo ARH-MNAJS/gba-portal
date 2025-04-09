@@ -15,7 +15,7 @@ import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { auth, db } from "@/lib/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 
 const formSchema = z.object({
   email: z.string().email({
@@ -53,21 +53,16 @@ export default function StudentLoginPage() {
         values.password
       );
       
-      // Check if user has the student role
-      const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+      // Check if user exists in the students collection
+      const studentDoc = await getDoc(doc(db, 'students', userCredential.user.uid));
       
-      if (!userDoc.exists()) {
-        throw new Error("User record not found");
-      }
-      
-      const userData = userDoc.data();
-      
-      if (userData.role !== 'student') {
-        // Sign out if role is not student
+      if (!studentDoc.exists()) {
+        console.log("Student record not found for authenticated user");
         await auth.signOut();
-        throw new Error("You don't have access as a student");
+        setErrorMessage("Your account is not registered as a student. Please use the correct login portal.");
+        return;
       }
-
+      
       console.log("Login successful, redirecting to student dashboard");
       toast.success("Logged in successfully!");
       
@@ -85,12 +80,27 @@ export default function StudentLoginPage() {
         errorMsg = "Invalid email or password";
       } else if (error.code === 'auth/too-many-requests') {
         errorMsg = "Too many failed login attempts. Please try again later.";
-      } else if (error.message) {
+      } else if (error.code === 'auth/invalid-credential') {
+        errorMsg = "Invalid credentials. Please check your email and password.";
+      } else if (error.code === 'auth/user-disabled') {
+        errorMsg = "This account has been disabled. Please contact support.";
+      } else if (error.message && error.message.includes("not registered")) {
         errorMsg = error.message;
+      } else {
+        // For any other errors, use a generic message to avoid leaking internal details
+        errorMsg = "Unable to sign in. Please try again or contact support.";
       }
       
       setErrorMessage(errorMsg);
       toast.error(errorMsg);
+      
+      // Make sure user is signed out if authentication failed
+      try {
+        await auth.signOut();
+      } catch (e) {
+        // Silently handle sign out errors
+        console.error("Error signing out:", e);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -108,8 +118,9 @@ export default function StudentLoginPage() {
             </p>
           </div>
           {errorMessage && (
-            <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive rounded">
-              {errorMessage}
+            <div className="p-4 bg-destructive/10 border border-destructive/20 text-destructive rounded-md">
+              <p className="font-medium mb-1">Login Error</p>
+              <p className="text-sm">{errorMessage}</p>
             </div>
           )}
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -151,10 +162,14 @@ export default function StudentLoginPage() {
               )}
             </div>
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading && (
-                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground" />
+              {isLoading ? (
+                <>
+                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground" />
+                  Signing in...
+                </>
+              ) : (
+                "Sign In"
               )}
-              Sign In
             </Button>
           </form>
           <div className="text-center text-sm text-muted-foreground">

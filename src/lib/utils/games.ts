@@ -20,6 +20,7 @@ import {
   GAME_COLORS
 } from '@/games/index';
 import { serializeFirestoreData } from '@/lib/utils';
+import { normalizeScore, getGameMaxScore } from './score-normalization';
 
 /**
  * Client-side version of serializeFirestoreData - similar to our server-side
@@ -73,9 +74,13 @@ export interface GameWithMetadata extends Game {
   thumbnailEmoji?: string;
   stats?: {
     bestScore: number;
+    normalizedBestScore?: number;
     lastScore: number;
+    normalizedLastScore?: number;
     plays: number;
   };
+  assignmentId?: string;
+  gameName?: string;
 }
 
 export interface GameAssignment {
@@ -90,11 +95,15 @@ export interface GameStats {
   id?: string;
   gameId: string;
   userId: string;
+  collegeId: string;
+  studentName: string;
   bestScore: number;
+  normalizedBestScore: number;
   lastScore: number;
+  normalizedLastScore: number;
   plays: number;
   lastPlayed: any;
-  timeTaken: number;
+  timeTaken?: number;
 }
 
 // Get a game category by ID
@@ -419,25 +428,69 @@ export async function getCollegeGameAssignments(collegeId: string): Promise<Game
   try {
     console.log("Getting assignments for college:", collegeId);
     
-    // First try to find the college document with the given ID directly
+    // First find if collegeId is from a user document (admin) or actual college
     const collegeRef = doc(db, 'colleges', collegeId);
     let collegeDoc = await getDoc(collegeRef);
     
-    // If not found, search for colleges where the college field equals collegeId
+    // If not found as direct college document, check if this is an admin user ID
     if (!collegeDoc.exists()) {
-      console.log("College document not found by direct ID, searching by college field");
-      const collegesRef = collection(db, 'colleges');
-      const q = query(collegesRef, where('college', '==', collegeId));
-      const querySnapshot = await getDocs(q);
+      console.log("College document not found by direct ID, checking if this is an admin user ID");
       
-      if (querySnapshot.empty) {
-        console.warn("No college document found for college ID:", collegeId);
-        return [];
+      // Get the admin user document
+      const userRef = doc(db, 'users', collegeId);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        
+        // If this is a college admin, get their actual college ID
+        if (userData.role === 'college' && userData.college) {
+          // Look up the actual college document
+          const actualCollegeId = userData.college;
+          console.log("Found actual college ID from admin user:", actualCollegeId);
+          
+          // Get the college document by the actual ID
+          const actualCollegeRef = doc(db, 'colleges', actualCollegeId);
+          collegeDoc = await getDoc(actualCollegeRef);
+          
+          if (collegeDoc.exists()) {
+            console.log("Found college document from admin's college ID");
+          } else {
+            // Try to find the college document based on the college field value
+            console.log("College document not found by ID from admin, searching by college field");
+            const collegesRef = collection(db, 'colleges');
+            const q = query(collegesRef, where('college', '==', actualCollegeId));
+            const querySnapshot = await getDocs(q);
+            
+            if (!querySnapshot.empty) {
+              collegeDoc = querySnapshot.docs[0];
+              console.log("Found college document by field value:", collegeDoc.id);
+            }
+          }
+        }
       }
       
-      // Use the first matching document (there should only be one)
-      collegeDoc = querySnapshot.docs[0];
-      console.log("Found college document by field value:", collegeDoc.id);
+      // If still not found, search for colleges by college field value
+      if (!collegeDoc || !collegeDoc.exists()) {
+        console.log("College document not found by admin lookup, searching by college field");
+        const collegesRef = collection(db, 'colleges');
+        const q = query(collegesRef, where('college', '==', collegeId));
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          console.warn("No college document found for college ID:", collegeId);
+          return [];
+        }
+        
+        // Use the first matching document (there should only be one)
+        collegeDoc = querySnapshot.docs[0];
+        console.log("Found college document by field value:", collegeDoc.id);
+      }
+    }
+    
+    if (!collegeDoc || !collegeDoc.exists()) {
+      console.warn("Could not find college document after all attempts");
+      return [];
     }
     
     // Get the college data and serialize it to ensure it's safe for client components
@@ -458,7 +511,7 @@ export async function getCollegeGameAssignments(collegeId: string): Promise<Game
         gameId: gameId,
         assignedBy: assignment.assignedBy || 'admin',
         assignedAt: assignment.assignedAt || new Date().toISOString(),
-        collegeId: collegeId
+        collegeId: collegeDoc.id // Always use the actual college document ID
       };
     });
   } catch (error) {
@@ -470,6 +523,49 @@ export async function getCollegeGameAssignments(collegeId: string): Promise<Game
 // Update or create game stats for a user
 export async function updateGameStats(gameId: string, userId: string, score: number, timeTaken: number) {
   try {
+    // Get student data to retrieve collegeId and name
+    const studentDoc = await getDoc(doc(db, 'students', userId));
+    
+    // Default values in case student data is incomplete
+    let collegeId = null;
+    let studentName = 'Unknown Student';
+    
+    if (studentDoc.exists()) {
+      const studentData = studentDoc.data();
+      // Add null check for collegeId
+      collegeId = studentData.collegeId || null;
+      studentName = studentData.name || 'Unknown Student';
+      
+      // If collegeId is still null, try to find it from users collection
+      if (!collegeId) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', userId));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            // Check if user has college field
+            collegeId = userData.college || null;
+          }
+        } catch (userError) {
+          console.error('Error fetching user data:', userError);
+          // Continue with null collegeId
+        }
+      }
+    } else {
+      console.warn(`Student document not found for userId: ${userId}`);
+      // Try to get data from users collection as fallback
+      try {
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          collegeId = userData.college || null;
+          studentName = userData.name || userData.email || 'Unknown Student';
+        }
+      } catch (userError) {
+        console.error('Error fetching user data:', userError);
+        // Continue with default values
+      }
+    }
+    
     const statsRef = collection(db, 'gameStats');
     const q = query(
       statsRef,
@@ -479,13 +575,23 @@ export async function updateGameStats(gameId: string, userId: string, score: num
     
     const statsSnap = await getDocs(q);
     
+    // Get the maximum possible score for this game
+    const maxScore = getGameMaxScore(gameId);
+    
+    // Calculate the normalized score (1-100)
+    const normalizedScore = normalizeScore(score, maxScore);
+    
     if (statsSnap.empty) {
       // Create new stats
       const newStatsRef = await addDoc(statsRef, {
         gameId,
         userId,
+        collegeId, // This might be null but that's better than undefined
+        studentName,
         bestScore: score,
+        normalizedBestScore: normalizedScore,
         lastScore: score,
+        normalizedLastScore: normalizedScore,
         plays: 1,
         lastPlayed: serverTimestamp(),
         timeTaken
@@ -495,8 +601,12 @@ export async function updateGameStats(gameId: string, userId: string, score: num
         id: newStatsRef.id,
         gameId,
         userId,
+        collegeId,
+        studentName,
         bestScore: score,
+        normalizedBestScore: normalizedScore,
         lastScore: score,
+        normalizedLastScore: normalizedScore,
         plays: 1,
         lastPlayed: new Date(),
         timeTaken
@@ -506,13 +616,25 @@ export async function updateGameStats(gameId: string, userId: string, score: num
       const statDoc = statsSnap.docs[0];
       const existingStats = serializeFirestoreDataLocal(statDoc.data()) as GameStats;
       
-      const updatedStats = {
-        bestScore: Math.max(existingStats.bestScore || 0, score),
+      // Determine if this is a new best score
+      const isBestScore = score > (existingStats.bestScore || 0);
+      
+      // Only include collegeId in update if it's not null
+      const updatedStats: any = {
+        studentName,
+        bestScore: isBestScore ? score : existingStats.bestScore,
+        normalizedBestScore: isBestScore ? normalizedScore : existingStats.normalizedBestScore,
         lastScore: score,
+        normalizedLastScore: normalizedScore,
         plays: (existingStats.plays || 0) + 1,
         lastPlayed: serverTimestamp(),
         timeTaken
       };
+      
+      // Only add collegeId if it's not null
+      if (collegeId !== null) {
+        updatedStats.collegeId = collegeId;
+      }
       
       await updateDoc(statDoc.ref, updatedStats);
       
@@ -520,6 +642,8 @@ export async function updateGameStats(gameId: string, userId: string, score: num
         id: statDoc.id,
         gameId,
         userId,
+        collegeId, // Might be null
+        studentName,
         ...updatedStats,
         lastPlayed: new Date()
       };

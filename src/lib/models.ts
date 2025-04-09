@@ -1,4 +1,6 @@
 import { UserRole } from './auth-utils';
+import { type Timestamp } from "firebase/firestore";
+import type { College } from "./utils/colleges";
 
 export interface User {
   id: string;
@@ -29,24 +31,14 @@ export interface Admin {
   updatedAt: string;
 }
 
-export interface College {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  college: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-// College options for dropdown
-export const collegeOptions = [
-  { id: "IIT Delhi", name: "Indian Institute of Technology, Delhi" },
-  { id: "IIT Bombay", name: "Indian Institute of Technology, Bombay" },
-  { id: "DTU", name: "Delhi Technological University" },
-  { id: "NSUT", name: "NSUT Delhi" },
-  { id: "IIIT Delhi", name: "IIIT Delhi" }
-];
+export const collegeOptions = async () => {
+  const { getAllColleges } = await import("./utils/colleges");
+  const colleges = await getAllColleges();
+  return colleges.map((college) => ({
+    id: college.id,
+    name: college.name,
+  }));
+};
 
 // Branch options for dropdown
 export const branchOptions = [

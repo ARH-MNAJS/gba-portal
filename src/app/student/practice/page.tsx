@@ -86,7 +86,9 @@ export default function StudentPracticePage() {
             if (gameStats) {
               enrichedGame.stats = {
                 bestScore: gameStats.bestScore,
+                normalizedBestScore: gameStats.normalizedBestScore,
                 lastScore: gameStats.lastScore,
+                normalizedLastScore: gameStats.normalizedLastScore,
                 plays: gameStats.plays
               };
             }

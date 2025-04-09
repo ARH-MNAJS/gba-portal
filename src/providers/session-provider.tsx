@@ -3,7 +3,7 @@
 import { ReactNode, createContext, useContext, useEffect, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { User } from "@/lib/auth-utils";
 
@@ -27,57 +27,89 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Fetch additional user data from Firestore
         try {
-          // First get the basic user data
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as Omit<User, 'id'>;
-            let userInfo: any = {
+          // First check if user is an admin
+          const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
+          if (adminDoc.exists()) {
+            const adminData = adminDoc.data();
+            setUser({
               id: firebaseUser.uid,
-              ...userData,
-              email: userData.email || firebaseUser.email || '',
-            };
-            
-            // Now fetch role-specific data (student, admin, or college)
-            if (userData.role === 'student') {
-              const studentDoc = await getDoc(doc(db, 'students', firebaseUser.uid));
-              if (studentDoc.exists()) {
-                const studentData = studentDoc.data();
-                userInfo = {
-                  ...userInfo,
-                  name: studentData.name || '',
-                  college: studentData.college || '', // This is the important field for students
-                  branch: studentData.branch || '',
-                  year: studentData.year || '',
-                };
-              }
-            } else if (userData.role === 'admin') {
-              const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
-              if (adminDoc.exists()) {
-                const adminData = adminDoc.data();
-                userInfo = {
-                  ...userInfo,
-                  name: adminData.name || '',
-                };
-              }
-            } else if (userData.role === 'college') {
-              const collegeDoc = await getDoc(doc(db, 'colleges', firebaseUser.uid));
-              if (collegeDoc.exists()) {
-                const collegeData = collegeDoc.data();
-                userInfo = {
-                  ...userInfo,
-                  name: collegeData.name || '',
-                  college: collegeData.college || '', // This is the important field for college admins
-                };
-              }
-            }
-            
-            setUser(userInfo);
-          } else {
-            console.error('User document does not exist in Firestore');
-            setUser(null);
+              email: adminData.email || firebaseUser.email || '',
+              role: 'admin',
+              name: adminData.name || '',
+            });
+            setLoading(false);
+            return;
           }
+          
+          // Then check if user is a student
+          const studentDoc = await getDoc(doc(db, 'students', firebaseUser.uid));
+          if (studentDoc.exists()) {
+            const studentData = studentDoc.data();
+            setUser({
+              id: firebaseUser.uid,
+              email: studentData.email || firebaseUser.email || '',
+              role: 'student',
+              name: studentData.name || '',
+              college: studentData.college || '',
+              branch: studentData.branch || '',
+              year: studentData.year || '',
+            });
+            setLoading(false);
+            return;
+          }
+          
+          // Check if user is a college admin (by adminId)
+          const collegeByIdQuery = query(
+            collection(db, 'colleges'), 
+            where('adminId', '==', firebaseUser.uid)
+          );
+          const collegeByIdSnapshot = await getDocs(collegeByIdQuery);
+          
+          if (!collegeByIdSnapshot.empty) {
+            // College entry found with this user ID as admin
+            const collegeDoc = collegeByIdSnapshot.docs[0];
+            const collegeData = collegeDoc.data();
+            
+            setUser({
+              id: firebaseUser.uid,
+              email: collegeData.adminEmail || firebaseUser.email || '',
+              role: 'admin', // Treat college admins as regular admins with limited scope
+              name: collegeData.adminName || '',
+              college: collegeDoc.id // Store the college ID for reference
+            });
+            setLoading(false);
+            return;
+          }
+          
+          // Last check: try to find college by admin email
+          if (firebaseUser.email) {
+            const collegeByEmailQuery = query(
+              collection(db, 'colleges'),
+              where('adminEmail', '==', firebaseUser.email)
+            );
+            const collegeByEmailSnapshot = await getDocs(collegeByEmailQuery);
+            
+            if (!collegeByEmailSnapshot.empty) {
+              // College entry found with this email as admin
+              const collegeDoc = collegeByEmailSnapshot.docs[0];
+              const collegeData = collegeDoc.data();
+              
+              setUser({
+                id: firebaseUser.uid,
+                email: firebaseUser.email,
+                role: 'admin', // Treat college admins as regular admins with limited scope
+                name: collegeData.adminName || '',
+                college: collegeDoc.id // Store the college ID for reference
+              });
+              setLoading(false);
+              return;
+            }
+          }
+          
+          // If we reach here, no valid user record was found
+          console.warn('No valid user record found in any collection');
+          setUser(null);
         } catch (error) {
           console.error('Error fetching user data:', error);
           setUser(null);

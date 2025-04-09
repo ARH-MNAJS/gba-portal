@@ -30,13 +30,8 @@ service cloud.firestore {
     // Access control for college profiles
     match /colleges/{collegeId} {
       allow read: if request.auth != null;
-      // Allow admins to update gamesAssigned field
-      allow update: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-                      (request.auth.uid == collegeId && 
-                       !('gamesAssigned' in request.resource.data) && 
-                       !('gamesAssigned' in resource.data));
-      allow create: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-      allow delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow write: if request.auth.uid == collegeId || 
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
     // Access control for games
@@ -45,10 +40,38 @@ service cloud.firestore {
       allow write: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
+    // Access control for game assignments (root collection)
+    match /gameAssignments/{assignmentId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Access control for game assignments in colleges (subcollection)
+    match /colleges/{collegeId}/gameAssignments/{assignmentId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
     // Access control for game stats
     match /gameStats/{statId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null;
+    }
+    
+    // Access control for assessments
+    match /assessments/{assessmentId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Access control for assessment attempts
+    match /assessmentAttempts/{attemptId} {
+      allow read: if request.auth != null;
+      // Allow students to create their own attempts, admins to read all
+      allow create: if request.auth != null && 
+                     request.resource.data.studentId == request.auth.uid;
+      allow update: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
   }
 }

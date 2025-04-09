@@ -9,182 +9,397 @@ import { AuthGuard } from "@/components/auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
-import collegesData from "@/data/colleges.json";
-import { createUser } from "@/lib/actions/user-actions";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
+import { createCollege } from "@/lib/utils/colleges";
+import { PlusCircle, X } from "lucide-react";
 
-// Define form schema for college user addition
-const collegeUserSchema = z.object({
-  name: z.string().min(1, { message: "Name is required" }),
-  email: z.string().email({ message: "Invalid email format" }),
-  phone: z.string().regex(/^\d{10}$/, { message: "Phone must be 10 digits" }),
-  password: z.string().min(6, { message: "Password must be at least 6 characters" }),
-  college: z.string().min(1, { message: "College is required" }),
+// Define form schema for college creation with admin
+const collegeFormSchema = z.object({
+  name: z.string().min(1, { message: "College name is required" }).max(100),
+  collegeId: z.string().min(1, { message: "College ID is required" }).max(50),
+  branches: z.array(z.string()).min(1, { message: "At least one branch is required" }),
+  years: z.array(z.string()).min(1, { message: "At least one year is required" }),
+  // Admin fields
+  adminName: z.string().min(1, { message: "Admin name is required" }),
+  adminEmail: z.string().email({ message: "Invalid email format" }),
+  adminPhone: z.string().regex(/^\d{10}$/, { message: "Phone must be 10 digits" }),
+  adminPassword: z.string().min(6, { message: "Password must be at least 6 characters" }),
 });
 
-type CollegeUserFormValues = z.infer<typeof collegeUserSchema>;
+type CollegeFormValues = z.infer<typeof collegeFormSchema>;
 
-export default function AddCollegeUserPage() {
+export default function AddCollegePage() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newBranch, setNewBranch] = useState<string>("");
+  const [newYear, setNewYear] = useState<string>("");
 
-  // Form for adding college user
-  const form = useForm<CollegeUserFormValues>({
-    resolver: zodResolver(collegeUserSchema),
+  const form = useForm<CollegeFormValues>({
+    resolver: zodResolver(collegeFormSchema),
     defaultValues: {
       name: "",
-      email: "",
-      phone: "",
-      password: "",
-      college: "",
+      collegeId: "",
+      branches: ["Computer Science", "Information Technology"],
+      years: ["First Year", "Second Year", "Third Year", "Fourth Year"],
+      adminName: "",
+      adminEmail: "",
+      adminPhone: "",
+      adminPassword: "",
     },
   });
 
-  // Handle form submission
-  const handleSubmit = async (values: CollegeUserFormValues) => {
-    try {
-      setIsSubmitting(true);
-      
-      // Call the server action to create a user
-      await createUser({
-        email: values.email,
-        password: values.password,
-        name: values.name,
-        role: 'college',
-        phone: values.phone,
-        college: values.college,
-      });
+  const addBranch = () => {
+    if (!newBranch) return;
+    form.setValue("branches", [...form.getValues("branches"), newBranch]);
+    setNewBranch("");
+  };
 
-      toast.success("College user created successfully");
+  const removeBranch = (index: number) => {
+    const branches = form.getValues("branches");
+    form.setValue(
+      "branches",
+      branches.filter((_, i) => i !== index)
+    );
+  };
+
+  const addYear = () => {
+    if (!newYear) return;
+    form.setValue("years", [...form.getValues("years"), newYear]);
+    setNewYear("");
+  };
+
+  const removeYear = (index: number) => {
+    const years = form.getValues("years");
+    form.setValue(
+      "years",
+      years.filter((_, i) => i !== index)
+    );
+  };
+
+  // Update the generateCollegeId function to log and ensure it works
+  const generateCollegeId = () => {
+    const name = form.getValues("name");
+    console.log("Generating ID from name:", name);
+    
+    if (!name) {
+      toast.error("Please enter a college name first");
+      return;
+    }
+    
+    const id = name
+      .toLowerCase()
+      .replace(/[^\w\s]/gi, "")
+      .replace(/\s+/g, "-");
+    
+    console.log("Generated ID:", id);
+    form.setValue("collegeId", id);
+    toast.success("College ID generated");
+  };
+
+  // Handle form submission
+  const onSubmit = async (values: CollegeFormValues) => {
+    setIsSubmitting(true);
+    
+    try {
+      // Create Firebase Auth user for the admin
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        values.adminEmail,
+        values.adminPassword
+      );
+      
+      const adminId = userCredential.user.uid;
+      
+      // Create college document with admin details embedded
+      await createCollege(
+        {
+          name: values.name,
+          branches: values.branches,
+          years: values.years,
+          // Include admin details directly in the college document
+          adminName: values.adminName,
+          adminEmail: values.adminEmail,
+          adminPhone: values.adminPhone,
+          adminId: adminId,
+        },
+        values.collegeId
+      );
+      
+      toast.success("College created successfully");
       router.push("/admin/user/college");
     } catch (error: any) {
-      console.error("Error creating college user:", error);
-      toast.error(error.message || "Failed to create college user");
+      console.error("Error creating college:", error);
+      toast.error(error.message || "Failed to create college");
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  // Get college name from ID
-  const getCollegeNameById = (id: string) => {
-    const college = collegesData.colleges.find(c => c.id === id);
-    return college?.name || id;
   };
 
   return (
     <AuthGuard requiredRole="admin">
       <div className="container mx-auto py-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Add New College User</h1>
-          <Button 
-            variant="outline" 
-            onClick={() => router.push("/admin/user/college")}
-          >
-            Cancel
+          <h1 className="text-2xl font-bold">Add New College</h1>
+          <Button variant="outline" onClick={() => router.back()}>
+            Back
           </Button>
         </div>
 
-        <div className="grid gap-6 max-w-xl mx-auto">
-          <Alert className="mb-4">
-            <AlertDescription>
-              College users can manage students and view reports for their institution.
-            </AlertDescription>
-          </Alert>
+        <Card>
+          <CardHeader>
+            <CardTitle>College Information</CardTitle>
+            <CardDescription>
+              Add a new college and its admin to the system
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* College Name Field */}
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>College Name</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Enter college name"
+                            {...field}
+                            autoComplete="off"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
-              <Input
-                id="name"
-                placeholder="Enter college admin's full name"
-                {...form.register("name")}
-              />
-              {form.formState.errors.name && (
-                <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
-              )}
-            </div>
+                  {/* College ID Field */}
+                  <FormField
+                    control={form.control}
+                    name="collegeId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>College ID</FormLabel>
+                        <div className="flex gap-2">
+                          <FormControl>
+                            <Input
+                              placeholder="Enter college ID"
+                              {...field}
+                              autoComplete="off"
+                            />
+                          </FormControl>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={generateCollegeId}
+                          >
+                            Generate
+                          </Button>
+                        </div>
+                        <FormDescription>
+                          This will be used as a unique identifier
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email Address</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="college-admin@example.com"
-                {...form.register("email")}
-              />
-              {form.formState.errors.email && (
-                <p className="text-sm text-destructive">{form.formState.errors.email.message}</p>
-              )}
-            </div>
+                <div className="grid grid-cols-1 gap-6">
+                  {/* Branches Section */}
+                  <div className="space-y-2">
+                    <Label>Branches</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {form.watch("branches").map((branch, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-1.5 bg-secondary text-secondary-foreground px-2.5 py-1 rounded-md"
+                        >
+                          <span className="text-sm">{branch}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeBranch(index)}
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <Input
+                        placeholder="Add a branch"
+                        value={newBranch}
+                        onChange={(e) => setNewBranch(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button type="button" variant="outline" onClick={addBranch}>
+                        <PlusCircle className="h-4 w-4 mr-2" />
+                        Add
+                      </Button>
+                    </div>
+                    {form.formState.errors.branches && (
+                      <p className="text-sm font-medium text-destructive">
+                        {form.formState.errors.branches.message}
+                      </p>
+                    )}
+                  </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone Number</Label>
-              <Input
-                id="phone"
-                placeholder="10-digit phone number"
-                {...form.register("phone")}
-              />
-              {form.formState.errors.phone && (
-                <p className="text-sm text-destructive">{form.formState.errors.phone.message}</p>
-              )}
-            </div>
+                  {/* Years Section */}
+                  <div className="space-y-2">
+                    <Label>Years</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {form.watch("years").map((year, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-1.5 bg-secondary text-secondary-foreground px-2.5 py-1 rounded-md"
+                        >
+                          <span className="text-sm">{year}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeYear(index)}
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <Input
+                        placeholder="Add a year"
+                        value={newYear}
+                        onChange={(e) => setNewYear(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button type="button" variant="outline" onClick={addYear}>
+                        <PlusCircle className="h-4 w-4 mr-2" />
+                        Add
+                      </Button>
+                    </div>
+                    {form.formState.errors.years && (
+                      <p className="text-sm font-medium text-destructive">
+                        {form.formState.errors.years.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Minimum 6 characters"
-                {...form.register("password")}
-              />
-              {form.formState.errors.password && (
-                <p className="text-sm text-destructive">{form.formState.errors.password.message}</p>
-              )}
-            </div>
+                <div className="pt-4 border-t">
+                  <h3 className="text-lg font-medium mb-4">Admin Information</h3>
+                  <Alert className="mb-4">
+                    <AlertDescription>
+                      An admin account will be created for this college. You can share these
+                      credentials with the college administrator.
+                    </AlertDescription>
+                  </Alert>
 
-            <div className="space-y-2">
-              <Label htmlFor="college">College</Label>
-              <Select
-                onValueChange={(value) => form.setValue("college", value)}
-              >
-                <SelectTrigger id="college">
-                  <SelectValue placeholder="Select college" />
-                </SelectTrigger>
-                <SelectContent>
-                  {collegesData.colleges.map((college) => (
-                    <SelectItem key={college.id} value={college.id}>
-                      {college.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.formState.errors.college && (
-                <p className="text-sm text-destructive">{form.formState.errors.college.message}</p>
-              )}
-            </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Admin Name Field */}
+                    <FormField
+                      control={form.control}
+                      name="adminName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Admin Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Enter admin name" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-            <div className="pt-4">
-              <Button 
-                type="submit" 
-                className="w-full" 
-                disabled={isSubmitting}
-              >
-                {isSubmitting && (
-                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground"></div>
-                )}
-                Add College User
-              </Button>
-            </div>
-          </form>
-        </div>
+                    {/* Admin Email Field */}
+                    <FormField
+                      control={form.control}
+                      name="adminEmail"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Admin Email</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="email"
+                              placeholder="Enter admin email"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Admin Phone Field */}
+                    <FormField
+                      control={form.control}
+                      name="adminPhone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Admin Phone</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Enter admin phone (10 digits)"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Admin Password Field */}
+                    <FormField
+                      control={form.control}
+                      name="adminPassword"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Admin Password</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="Enter admin password"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={isSubmitting}>
+                    {isSubmitting ? "Creating..." : "Create College"}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
       </div>
     </AuthGuard>
   );

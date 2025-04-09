@@ -31,25 +31,23 @@ import {
 import { Eye } from "lucide-react";
 import { fetchUsers, fetchUserById } from "@/lib/actions/user-actions";
 import { useSession } from "@/providers/session-provider";
-import collegesData from "@/data/colleges.json";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { getCollegeById, getCollegeByAdminId, type College } from '@/lib/utils/colleges';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from "sonner";
 
 interface Student {
   id: string;
   name: string;
   email: string;
-  branch?: string;
-  year?: string;
-  college?: string;
+  branch: string;
+  year: string;
+  createdAt: string;
 }
 
-interface CollegeData {
-  id: string;
-  name: string;
-  branches: string[];
-  years: string[];
-}
+interface CollegeData extends College {}
 
 export default function CollegeStudentsPage() {
   const router = useRouter();
@@ -67,76 +65,46 @@ export default function CollegeStudentsPage() {
   const [collegeInfo, setCollegeInfo] = useState<CollegeData | null>(null);
   const [collegeId, setCollegeId] = useState<string | null>(null);
   const studentsPerPage = 10;
+  const [collegeName, setCollegeName] = useState<string>('College');
   
   // Get college ID either from session or from Firestore
   useEffect(() => {
     const getCollegeId = async () => {
       if (sessionLoading) return;
       
-      
-      // If college ID is in the session, use it
-      if (user?.college) {
-        setCollegeId(user.college);
-        return;
-      }
-      
-      // Otherwise, fetch from Firestore directly
-      if (user?.id) {
-        try {
-          
-          // First try to get from colleges collection
-          const collegeDoc = await getDoc(doc(db, 'colleges', user.id));
-          
-          if (collegeDoc.exists()) {
-            const collegeData = collegeDoc.data();
-            
-            if (collegeData.college) {
-              setCollegeId(collegeData.college);
-              return;
-            }
-          }
-          
-          // If not found, try to get from users collection
-          const userDoc = await getDoc(doc(db, 'users', user.id));
-          
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            
-            if (userData.role === 'college') {
-              
-              // Try to get college ID from other collections
-              const collegesQuery = query(
-                collection(db, 'colleges'),
-                where('email', '==', user.email)
-              );
-              
-              const querySnapshot = await getDocs(collegesQuery);
-              
-              if (!querySnapshot.empty) {
-                const collegeData = querySnapshot.docs[0].data();
-                console.log("College data found by email query:", collegeData);
-                
-                if (collegeData.college) {
-                  console.log("College ID found by email query:", collegeData.college);
-                  setCollegeId(collegeData.college);
-                  return;
-                }
-              }
-            }
-          }
-          
-          console.error("Failed to find college ID for user");
-          setError("Could not find college ID for your user account");
-          setLoading(false);
-          
-        } catch (err) {
-          console.error("Error fetching college data:", err);
-          setError("Error fetching college data");
-          setLoading(false);
+      try {
+        // If user is a college admin, get their college ID
+        if (user?.role === 'college' && user?.college) {
+          setCollegeId(user.college);
+          return;
         }
-      } else {
-        console.error("No user ID available");
-        setError("No user ID available in session");
+        
+        // If the user ID itself is a college ID, use it directly
+        try {
+          const college = await getCollegeById(user?.id || '');
+          if (college) {
+            setCollegeId(college.id);
+            return;
+          }
+        } catch (err) {
+          console.log("User ID is not a direct college ID");
+        }
+        
+        // Try to get college by admin ID
+        if (user?.id) {
+          const college = await getCollegeByAdminId(user.id);
+          if (college) {
+            setCollegeId(college.id);
+            return;
+          }
+        }
+        
+        console.error("Failed to find college ID for user");
+        setError("Could not find college ID for your user account");
+        setLoading(false);
+      } catch (err) {
+        console.error("Error fetching college data:", err);
+        setError("Error fetching college data");
         setLoading(false);
       }
     };
@@ -148,29 +116,19 @@ export default function CollegeStudentsPage() {
   useEffect(() => {
     if (!collegeId) return;
     
-    console.log("Using college ID to find college info:", collegeId);
-    console.log("All available colleges in data:", collegesData.colleges);
-    
-    // First try with strict equality
-    let college = collegesData.colleges.find(c => c.id === collegeId);
-    
-    if (college) {
-      console.log("MATCH FOUND - College data found for ID:", collegeId, college);
-      setCollegeInfo(college);
-    } else {
-      console.warn("NO STRICT MATCH - Trying loose comparison");
-      
-      // Try with loose equality (in case of type mismatch)
-      college = collegesData.colleges.find(c => c.id == collegeId);
-      
-      if (college) {
-        console.log("LOOSE MATCH FOUND - College data found for ID:", collegeId, college);
+    const fetchCollegeInfo = async () => {
+      try {
+        const college = await getCollegeById(collegeId);
         setCollegeInfo(college);
-      } else {
-        console.error("NO MATCH - College not found in colleges.json for ID:", collegeId);
-        setError(`College ID ${collegeId} not found in database. Available IDs: ${collegesData.colleges.map(c => c.id).join(", ")}`);
+        setCollegeName(college.name);
+      } catch (error) {
+        console.error("Failed to fetch college information:", error);
+        toast.error("Failed to load college information");
+        setError("Failed to load college information");
       }
-    }
+    };
+    
+    fetchCollegeInfo();
   }, [collegeId]);
   
   // Load students when the college info is available
@@ -190,7 +148,9 @@ export default function CollegeStudentsPage() {
       filtered = filtered.filter(student => {
         return (
           student.name?.toLowerCase().includes(lowercasedFilter) ||
-          student.email.toLowerCase().includes(lowercasedFilter)
+          student.email.toLowerCase().includes(lowercasedFilter) ||
+          student.branch.toLowerCase().includes(lowercasedFilter) ||
+          student.year.toLowerCase().includes(lowercasedFilter)
         );
       });
     }
@@ -283,94 +243,58 @@ export default function CollegeStudentsPage() {
   };
 
   const renderPagination = () => {
-    // If we have 7 or fewer pages, show all pages
-    if (totalPages <= 7) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-        <PaginationItem key={page}>
+    const pages = [];
+    
+    // Calculate page range to show (show 5 pages at most around current page)
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, startPage + 4);
+    
+    if (endPage - startPage < 4 && totalPages > 5) {
+      startPage = Math.max(1, endPage - 4);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(
+        <PaginationItem key={i}>
           <PaginationLink
-            isActive={page === currentPage}
-            onClick={() => handlePageChange(page)}
+            isActive={i === currentPage}
+            onClick={() => handlePageChange(i)}
           >
-            {page}
-          </PaginationLink>
-        </PaginationItem>
-      ));
-    }
-    
-    // Otherwise, show a truncated list
-    const items = [];
-    
-    // Always show first page
-    items.push(
-      <PaginationItem key={1}>
-        <PaginationLink
-          isActive={1 === currentPage}
-          onClick={() => handlePageChange(1)}
-        >
-          1
-        </PaginationLink>
-      </PaginationItem>
-    );
-    
-    // Calculate the range of pages to show
-    let startPage = Math.max(2, currentPage - 2);
-    let endPage = Math.min(totalPages - 1, currentPage + 2);
-    
-    // Ensure we always show 5 pages (if available)
-    const numPagesShown = endPage - startPage + 1;
-    if (numPagesShown < 5) {
-      if (startPage === 2) {
-        endPage = Math.min(totalPages - 1, endPage + (5 - numPagesShown));
-      } else if (endPage === totalPages - 1) {
-        startPage = Math.max(2, startPage - (5 - numPagesShown));
-      }
-    }
-    
-    // Add ellipsis if needed at the beginning
-    if (startPage > 2) {
-      items.push(
-        <PaginationItem key="start-ellipsis">
-          <span className="px-4">...</span>
-        </PaginationItem>
-      );
-    }
-    
-    // Add the middle pages
-    for (let page = startPage; page <= endPage; page++) {
-      items.push(
-        <PaginationItem key={page}>
-          <PaginationLink
-            isActive={page === currentPage}
-            onClick={() => handlePageChange(page)}
-          >
-            {page}
+            {i}
           </PaginationLink>
         </PaginationItem>
       );
     }
     
-    // Add ellipsis if needed at the end
-    if (endPage < totalPages - 1) {
-      items.push(
-        <PaginationItem key="end-ellipsis">
-          <span className="px-4">...</span>
-        </PaginationItem>
-      );
-    }
-    
-    // Always show last page
-    items.push(
-      <PaginationItem key={totalPages}>
-        <PaginationLink
-          isActive={totalPages === currentPage}
-          onClick={() => handlePageChange(totalPages)}
-        >
-          {totalPages}
-        </PaginationLink>
-        </PaginationItem>
+    return (
+      <Pagination>
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                if (currentPage > 1) handlePageChange(currentPage - 1);
+              }}
+              className={currentPage <= 1 ? "pointer-events-none opacity-50" : ""}
+            />
+          </PaginationItem>
+          
+          {pages}
+          
+          <PaginationItem>
+            <PaginationNext
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                if (currentPage < totalPages) handlePageChange(currentPage + 1);
+              }}
+              className={currentPage >= totalPages ? "pointer-events-none opacity-50" : ""}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
     );
-    
-    return items;
   };
 
   const pageStudents = getCurrentPageStudents();
@@ -382,11 +306,22 @@ export default function CollegeStudentsPage() {
     }
   };
 
+  if (loading) {
+    return <div className="space-y-4">
+      <Skeleton className="h-8 w-[200px]" />
+      <Skeleton className="h-[400px] w-full" />
+    </div>;
+  }
+
+  if (error) {
+    return <div className="text-red-500">{error}</div>;
+  }
+
   return (
     <AuthGuard requiredRole="college">
       <div className="container mx-auto py-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-          <h1 className="text-2xl font-bold mb-2 md:mb-0">Students</h1>
+          <h1 className="text-2xl font-bold mb-2 md:mb-0">Students - {collegeName}</h1>
           {collegeInfo && (
             <p className="text-sm text-muted-foreground">
               College: {collegeInfo.name}
@@ -511,25 +446,7 @@ export default function CollegeStudentsPage() {
 
         {totalPages > 1 && (
           <div className="mt-4 flex justify-center">
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious 
-                    onClick={() => handlePageChange(currentPage - 1)}
-                    disabled={currentPage === 1}
-                  />
-                </PaginationItem>
-                
-                {renderPagination()}
-                
-                <PaginationItem>
-                  <PaginationNext 
-                    onClick={() => handlePageChange(currentPage + 1)}
-                    disabled={currentPage === totalPages}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
+            {renderPagination()}
           </div>
         )}
       </div>

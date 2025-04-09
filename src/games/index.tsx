@@ -180,4 +180,10 @@ export function getGameColorScheme(gameId: string) {
 // Function to get the dynamic component for a game
 export function getGameComponent(gameId: string): React.ComponentType<GameProps> | null {
   return GameComponents[gameId as keyof typeof GameComponents] || null;
+}
+
+// Function to get thumbnail emoji for a game
+export function getGameThumbnail(gameId: string): string {
+  const game = getGameById(gameId);
+  return game?.thumbnailEmoji || '🎮';
 } 

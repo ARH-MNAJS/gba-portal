@@ -1,15 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AuthGuard } from "@/components/auth-guard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import collegesData from "@/data/colleges.json";
 import { fetchUserById } from "@/lib/actions/user-actions";
+import { getCollegeNameById } from "@/lib/utils/colleges";
 
 interface UserDetails {
   id: string;
@@ -26,23 +26,36 @@ interface UserDetails {
 
 export default function UserDetailsPage() {
   const router = useRouter();
-  const params = useParams();
-  const userId = params.id as string;
-  
-  const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<UserDetails | null>(null);
-
+  const [loading, setLoading] = useState(true);
+  const [collegeName, setCollegeName] = useState<string>('');
+  
   useEffect(() => {
-    loadUserDetails();
-  }, [userId]);
-
-  const loadUserDetails = async () => {
+    // Get user ID from URL path
+    const path = window.location.pathname;
+    const userId = path.split('/').pop() || '';
+    
+    loadUserDetails(userId);
+  }, []);
+  
+  const loadUserDetails = async (userId: string) => {
     try {
       setLoading(true);
       
       // Call the server action to fetch user details
       const userDetails = await fetchUserById(userId);
       setUser(userDetails as UserDetails);
+      
+      // If the user has a college, get its name
+      if (userDetails?.college) {
+        try {
+          const name = await getCollegeNameById(userDetails.college);
+          setCollegeName(name);
+        } catch (error) {
+          console.error("Error fetching college name:", error);
+          setCollegeName(userDetails.college);
+        }
+      }
     } catch (error: any) {
       console.error('Error fetching user details:', error);
       toast.error(error.message || 'Failed to fetch user details');
@@ -50,11 +63,6 @@ export default function UserDetailsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const getCollegeNameById = (id: string) => {
-    const college = collegesData.colleges.find(c => c.id === id);
-    return college ? college.name : id;
   };
 
   const formatDate = (dateString?: string) => {
@@ -124,7 +132,7 @@ export default function UserDetailsPage() {
             <CardContent className="space-y-4">
               <div>
                 <Label className="text-muted-foreground">College</Label>
-                <p className="text-lg font-medium">{getCollegeNameById(user.college)}</p>
+                <p className="text-lg font-medium">{collegeName || user.college}</p>
               </div>
               <div>
                 <Label className="text-muted-foreground">Branch</Label>

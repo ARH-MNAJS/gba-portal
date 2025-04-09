@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { useSession } from "@/providers/session-provider";
 import { ThemeToggle } from "./theme-toggle";
-import { Home, Users, GamepadIcon, BarChartIcon, ChevronDown, GraduationCap, Building2, ShieldCheck, Brain } from "lucide-react";
+import { Home, Users, BarChartIcon, ChevronDown, GraduationCap, Building2, ShieldCheck, Brain } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -24,33 +24,31 @@ import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
 import { useState, useEffect } from "react";
 import { useSignOut } from "./auth-sign-out";
 
-const sidebarNavItems = [
+export const sidebarNavItems = [
   {
-    title: "Home",
+    title: "Dashboard",
     href: "/admin",
     icon: Home,
   },
   {
     title: "Users",
+    href: "/admin/user",
     icon: Users,
     submenu: true,
     submenuItems: [
       {
         title: "Students",
-        href: "/admin/user/students",
-        icon: GraduationCap,
+        href: "/admin/user/students"
       },
       {
-        title: "College",
-        href: "/admin/user/college",
-        icon: Building2,
+        title: "Colleges",
+        href: "/admin/user/college"
       },
       {
         title: "Admin",
-        href: "/admin/user/admin",
-        icon: ShieldCheck,
-      },
-    ],
+        href: "/admin/user/admin"
+      }
+    ]
   },
   {
     title: "Practice",
@@ -60,22 +58,12 @@ const sidebarNavItems = [
   {
     title: "Assessments",
     href: "/admin/assessments",
-    icon: GamepadIcon,
+    icon: GraduationCap,
   },
   {
     title: "Reports",
+    href: "/admin/reports",
     icon: BarChartIcon,
-    submenu: true,
-    submenuItems: [
-      {
-        title: "Practice",
-        href: "/admin/reports/practice",
-      },
-      {
-        title: "Assessments",
-        href: "/admin/reports/assessments",
-      },
-    ],
   },
 ];
 

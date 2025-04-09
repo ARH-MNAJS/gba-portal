@@ -23,9 +23,12 @@ export async function POST(request: NextRequest) {
         users: false,
         students: false,
         admins: false,
-        colleges: false
+        colleges: false,
+        games: false,
+        gameStats: false,
+        assessments: false,
+        assessmentAttempts: false
       },
-      admin: false,
       errors: [] as string[]
     };
     
@@ -47,81 +50,42 @@ export async function POST(request: NextRequest) {
       const collegesSnapshot = await adminDb.collection('colleges').limit(1).get();
       results.collections.colleges = !collegesSnapshot.empty;
       
+      // Check games collection
+      const gamesSnapshot = await adminDb.collection('games').limit(1).get();
+      results.collections.games = !gamesSnapshot.empty;
+      
+      // Check gameStats collection
+      const gameStatsSnapshot = await adminDb.collection('gameStats').limit(1).get();
+      results.collections.gameStats = !gameStatsSnapshot.empty;
+      
+      // Check assessments collection
+      const assessmentsSnapshot = await adminDb.collection('assessments').limit(1).get();
+      results.collections.assessments = !assessmentsSnapshot.empty;
+      
+      // Check assessmentAttempts collection
+      const attemptsSnapshot = await adminDb.collection('assessmentAttempts').limit(1).get();
+      results.collections.assessmentAttempts = !attemptsSnapshot.empty;
+      
     } catch (error: any) {
       results.errors.push(`Error checking collections: ${error.message}`);
     }
     
-    // Check if admin user exists
+    // Check for required indexes
     try {
-      try {
-        const adminUserRecord = await adminAuth.getUserByEmail('admin@example.com');
-        if (adminUserRecord) {
-          // Check if admin profile exists in Firestore
-          const adminDoc = await adminDb.collection('admins').doc(adminUserRecord.uid).get();
-          results.admin = adminDoc.exists;
-        }
-      } catch (error: any) {
-        // Admin user doesn't exist, create it
-        if (error.code === 'auth/user-not-found') {
-          // Create admin user
-          const adminId = '00000000-0000-0000-0000-000000000000';
-          const password = 'admin123';
-          
-          // Hash password (Firebase Auth will handle this, but we'll still hash it for our record)
-          const salt = await bcrypt.genSalt(10);
-          const hashedPassword = await bcrypt.hash(password, salt);
-          
-          try {
-            // Create user in Firebase Auth
-            const userRecord = await adminAuth.createUser({
-              uid: adminId,
-              email: 'admin@example.com',
-              password: password,
-              emailVerified: true
-            });
-            
-            // Create user profile in Firestore
-            const timestamp = new Date().toISOString();
-            
-            // Add to users collection
-            await adminDb.collection('users').doc(adminId).set({
-              email: 'admin@example.com',
-              role: 'admin',
-              createdAt: timestamp,
-              updatedAt: timestamp
-            });
-            
-            // Add to admins collection
-            await adminDb.collection('admins').doc(adminId).set({
-              name: 'Admin User',
-              email: 'admin@example.com',
-              phone: '1234567890',
-              createdAt: timestamp,
-              updatedAt: timestamp
-            });
-            
-            results.admin = true;
-          } catch (createError: any) {
-            results.errors.push(`Error creating admin user: ${createError.message}`);
-          }
-        } else {
-          results.errors.push(`Error checking admin user: ${error.message}`);
-        }
-      }
+      // This would require the Firebase Admin SDK with full admin privileges
+      // For simplicity, we're just returning a list of required indexes in the UI
+      
+      // const indexes = await adminDb.listIndexes();
+      // Checking indexes is complex and typically requires high privileges
     } catch (error: any) {
-      results.errors.push(`Admin creation exception: ${error.message}`);
+      results.errors.push(`Error checking indexes: ${error.message}`);
     }
     
-    return NextResponse.json({
-      success: true,
-      message: 'Database check complete',
-      results,
-      note: "Firebase collections and admin user have been checked."
-    });
+    return NextResponse.json(results);
   } catch (error: any) {
-    console.error('Database setup error:', error);
+    console.error('Error checking database:', error);
     return NextResponse.json(
-      { error: 'Internal server error', message: error.message },
+      { error: error.message || 'Internal server error' },
       { status: 500 }
     );
   }

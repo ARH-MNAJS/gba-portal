@@ -1,4 +1,4 @@
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { initializeApp, cert, getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -10,6 +10,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
     // If we have the full JSON as an environment variable, use it
     firebaseAdminConfig = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    console.log('Using FIREBASE_SERVICE_ACCOUNT_KEY from environment variables');
   } catch (error) {
     console.error('Error parsing FIREBASE_SERVICE_ACCOUNT_KEY:', error);
     throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT_KEY format');
@@ -17,6 +18,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 } else {
   // Otherwise, construct from individual environment variables
   if (!process.env.FIREBASE_PRIVATE_KEY) {
+    console.error('FIREBASE_PRIVATE_KEY not found in environment variables');
     throw new Error('FIREBASE_PRIVATE_KEY environment variable is required');
   }
   
@@ -26,19 +28,32 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     // Make sure to properly format the private key by replacing escaped newlines
     privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   };
+  console.log('Using individual Firebase credential environment variables');
 }
 
-// Check if Firebase Admin has already been initialized
-const apps = getApps();
-const app = !apps.length
-  ? initializeApp({
+let app;
+
+try {
+  // Check if Firebase Admin has already been initialized
+  if (getApps().length === 0) {
+    console.log('Initializing Firebase Admin SDK');
+    app = initializeApp({
       credential: cert(firebaseAdminConfig),
-    })
-  : apps[0];
+    });
+  } else {
+    console.log('Firebase Admin SDK already initialized');
+    app = getApp();
+  }
+} catch (error) {
+  console.error('Error initializing Firebase Admin SDK:', error);
+  throw new Error('Failed to initialize Firebase Admin SDK');
+}
 
 // Export admin services
 export const adminAuth = getAuth(app);
 export const adminDb = getFirestore(app);
+
+console.log('Firebase Admin SDK initialized successfully');
 
 /**
  * Helper function to serialize Firestore data for server-client communication

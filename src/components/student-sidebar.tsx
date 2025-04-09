@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { useSession } from "@/providers/session-provider";
 import { ThemeToggle } from "./theme-toggle";
-import { Home, Book, GamepadIcon, BarChart3Icon, Brain } from "lucide-react";
+import { Home, Book, BarChart3Icon, Brain } from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -33,11 +33,6 @@ const sidebarNavItems = [
     title: "Practice",
     href: "/student/practice",
     icon: Brain,
-  },
-  {
-    title: "Games",
-    href: "/student/games",
-    icon: GamepadIcon,
   },
   {
     title: "Reports",

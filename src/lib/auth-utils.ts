@@ -13,6 +13,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { toast } from 'sonner';
 
+// Define possible user roles
 export type UserRole = 'admin' | 'student' | 'college';
 
 export interface User {
@@ -78,8 +79,21 @@ export const useRequireAuth = () => {
               ...userData,
             });
           } else {
-            console.error('User document does not exist in Firestore');
-            setUser(null);
+            // Check if the user might be a college admin
+            const collegeQuery = await getDoc(doc(db, 'colleges', firebaseUser.uid));
+            if (collegeQuery.exists() && collegeQuery.data().adminId === firebaseUser.uid) {
+              // College admin found using the adminId field in the college document
+              setUser({
+                id: firebaseUser.uid,
+                email: collegeQuery.data().adminEmail || firebaseUser.email || '',
+                role: 'admin', // Treat college admins as admins with limited scope
+                name: collegeQuery.data().adminName || '',
+                college: collegeQuery.id
+              });
+            } else {
+              console.error('User document does not exist in Firestore');
+              setUser(null);
+            }
           }
         } catch (error) {
           console.error('Error fetching user data:', error);
@@ -118,8 +132,6 @@ export const getRoleRedirectPath = (role: UserRole): string => {
       return '/admin';
     case 'student':
       return '/student';
-    case 'college':
-      return '/college';
     default:
       return '/login';
   }
@@ -149,25 +161,44 @@ export const useAuthSignIn = () => {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
       
-      // Fetch user data to check role
+      // First, check if this is a regular user
       const userDoc = await getDoc(doc(db, 'users', user.uid));
-      if (!userDoc.exists()) {
-        await firebaseSignOut(auth);
-        toast.error('User profile not found');
-        return { success: false, error: 'User profile not found' };
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        
+        // If role is specified, check if the user has the correct role
+        if (role && userData.role !== role) {
+          await firebaseSignOut(auth);
+          toast.error(`You don't have ${role} access`);
+          return { success: false, error: `You don't have ${role} access` };
+        }
+        
+        toast.success('Signed in successfully');
+        return { success: true, user: { ...userData, id: user.uid } };
       }
       
-      const userData = userDoc.data();
-      
-      // If role is specified, check if the user has the correct role
-      if (role && userData.role !== role) {
-        await firebaseSignOut(auth);
-        toast.error(`You don't have ${role} access`);
-        return { success: false, error: `You don't have ${role} access` };
+      // If no user doc found, check if this is a college admin (in college document)
+      const collegeDoc = await getDoc(doc(db, 'colleges', user.uid));
+      if (collegeDoc.exists() && collegeDoc.data().adminId === user.uid) {
+        const collegeData = collegeDoc.data();
+        
+        toast.success('Signed in as college admin');
+        return { 
+          success: true, 
+          user: { 
+            id: user.uid,
+            email: collegeData.adminEmail || user.email || '',
+            role: 'admin', // Treat college admins as admins with limited scope
+            name: collegeData.adminName || '',
+            college: collegeDoc.id
+          } 
+        };
       }
       
-      toast.success('Signed in successfully');
-      return { success: true, user: { ...userData, id: user.uid } };
+      // If we get here, no valid user profile was found
+      await firebaseSignOut(auth);
+      toast.error('User profile not found');
+      return { success: false, error: 'User profile not found' };
     } catch (error: any) {
       const errorMessage = handleAuthError(error);
       toast.error(errorMessage);

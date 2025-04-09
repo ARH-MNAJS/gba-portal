@@ -79,17 +79,32 @@ export default function AdminUsersPage() {
   const loadUsers = async () => {
     try {
       setLoading(true);
+      console.log('AdminUsersPage: Loading admin users, page:', currentPage);
       
       // Call the server action to fetch users with role filter
       const result = await fetchUsers(currentPage, usersPerPage, "admin");
+      console.log('AdminUsersPage: Admin data loaded:', result);
       
-      setUsers(result.users as User[]);
-      setTotalPages(result.totalPages);
-      setTotalUsers(result.totalUsers);
+      if (!result || !result.users || result.users.length === 0) {
+        console.log('AdminUsersPage: No admin data returned');
+        setUsers([]);
+        setFilteredUsers([]);
+        setTotalPages(1);
+        setTotalUsers(0);
+      } else {
+        setUsers(result.users as User[]);
+        setFilteredUsers(result.users as User[]);
+        setTotalPages(result.totalPages);
+        setTotalUsers(result.totalUsers);
+        console.log('AdminUsersPage: Set admin data in state:', result.users.length);
+      }
     } catch (error: any) {
-      console.error("Error fetching admin users:", error);
+      console.error("AdminUsersPage: Error fetching admin users:", error);
       toast.error(error.message || "Failed to fetch admin users");
       setUsers([]);
+      setFilteredUsers([]);
+      setTotalPages(1);
+      setTotalUsers(0);
     } finally {
       setLoading(false);
     }

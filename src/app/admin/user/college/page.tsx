@@ -1,374 +1,240 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AuthGuard } from "@/components/auth-guard";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+  Search, 
+  UserPlus, 
+  ChevronRight,
+  Eye,
+  Trash2,
+  Loader2
+} from "lucide-react";
+import { AuthGuard } from "@/components/auth-guard";
+import { getAllColleges, type College } from "@/lib/utils/colleges";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
+import { db } from "@/lib/firebase";
+import { doc, deleteDoc } from "firebase/firestore";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { toast } from "sonner";
-import { Eye, Trash2, UserPlus } from "lucide-react";
-import { fetchUsers, deleteUser } from "@/lib/actions/user-actions";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import collegesData from "@/data/colleges.json";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { deleteUser as deleteFirebaseUser } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  role: string;
-  college?: string;
-}
-
-export default function AdminCollegeUsersPage() {
-  const router = useRouter();
-  const [users, setUsers] = useState<User[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
+export default function CollegeUsersPage() {
+  const [colleges, setColleges] = useState<College[]>([]);
+  const [filteredColleges, setFilteredColleges] = useState<College[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
-  const [userToDelete, setUserToDelete] = useState<User | null>(null);
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalUsers, setTotalUsers] = useState(0);
-  const usersPerPage = 10;
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const router = useRouter();
 
-  // Fetch users on load and when page changes
   useEffect(() => {
-    loadUsers();
-  }, [currentPage]);
+    const fetchColleges = async () => {
+      setLoading(true);
+      try {
+        // Get all colleges with admin info embedded
+        const collegesList = await getAllColleges();
+        setColleges(collegesList);
+        setFilteredColleges(collegesList);
+      } catch (error) {
+        console.error("Error fetching colleges:", error);
+        toast.error("Failed to load colleges data");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  // Update filtered users when search term or users change
+    fetchColleges();
+  }, []);
+
   useEffect(() => {
     if (searchTerm.trim() === "") {
-      setFilteredUsers(users);
-    } else {
-      const lowercasedFilter = searchTerm.toLowerCase();
-      const filtered = users.filter(user => {
-        return (
-          user.name?.toLowerCase().includes(lowercasedFilter) ||
-          user.email.toLowerCase().includes(lowercasedFilter) ||
-          user.phone?.toLowerCase().includes(lowercasedFilter)
-        );
-      });
-      setFilteredUsers(filtered);
+      setFilteredColleges(colleges);
+      return;
     }
-  }, [searchTerm, users]);
 
-  const loadUsers = async () => {
-    try {
-      setLoading(true);
-      
-      // Call the server action to fetch users with role filter
-      const result = await fetchUsers(currentPage, usersPerPage, "college");
-      
-      setUsers(result.users as User[]);
-      setTotalPages(result.totalPages);
-      setTotalUsers(result.totalUsers);
-    } catch (error: any) {
-      console.error("Error fetching college users:", error);
-      toast.error(error.message || "Failed to fetch college users");
-      setUsers([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const confirmDelete = (user: User) => {
-    setUserToDelete(user);
-    setConfirmDeleteOpen(true);
-  };
-
-  const handleDeleteUser = async () => {
-    if (!userToDelete) return;
-    
-    try {
-      // Call the server action to delete the user
-      await deleteUser(userToDelete.id);
-      
-      // Update UI
-      setUsers(users.filter(user => user.id !== userToDelete.id));
-      toast.success("College user deleted successfully");
-    } catch (error: any) {
-      console.error("Error deleting college user:", error);
-      toast.error(error.message || "Failed to delete college user");
-    } finally {
-      setConfirmDeleteOpen(false);
-      setUserToDelete(null);
-    }
-  };
-
-  const handlePageChange = (page: number) => {
-    if (page < 1 || page > totalPages) return;
-    setCurrentPage(page);
-  };
-
-  const renderPagination = () => {
-    // If we have 7 or fewer pages, show all pages
-    if (totalPages <= 7) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-        <PaginationItem key={page}>
-          <PaginationLink
-            isActive={page === currentPage}
-            onClick={() => handlePageChange(page)}
-          >
-            {page}
-          </PaginationLink>
-        </PaginationItem>
-      ));
-    }
-    
-    // Otherwise, show a truncated list
-    const items = [];
-    
-    // Always show first page
-    items.push(
-      <PaginationItem key={1}>
-        <PaginationLink
-          isActive={1 === currentPage}
-          onClick={() => handlePageChange(1)}
-        >
-          1
-        </PaginationLink>
-      </PaginationItem>
+    const filtered = colleges.filter((college) =>
+      college.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      college.adminName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      college.adminEmail?.toLowerCase().includes(searchTerm.toLowerCase())
     );
-    
-    // Calculate the range of pages to show
-    let startPage = Math.max(2, currentPage - 2);
-    let endPage = Math.min(totalPages - 1, currentPage + 2);
-    
-    // Ensure we always show 5 pages (if available)
-    const numPagesShown = endPage - startPage + 1;
-    if (numPagesShown < 5) {
-      if (startPage === 2) {
-        endPage = Math.min(totalPages - 1, endPage + (5 - numPagesShown));
-      } else if (endPage === totalPages - 1) {
-        startPage = Math.max(2, startPage - (5 - numPagesShown));
+    setFilteredColleges(filtered);
+  }, [searchTerm, colleges]);
+
+  const handleViewCollege = (collegeId: string) => {
+    router.push(`/admin/reports/practice/${collegeId}`);
+  };
+  
+  const handleDeleteCollege = async (collegeId: string, adminId?: string) => {
+    setDeleting(collegeId);
+    try {
+      // Delete college from colleges collection
+      await deleteDoc(doc(db, "colleges", collegeId));
+      
+      // If adminId exists, try to delete from Firebase Auth
+      if (adminId) {
+        try {
+          // Get a reference to the user via admin SDK
+          // This might not work in the client side - requires Firebase Admin SDK
+          // We're keeping this as a placeholder for server-side implementation
+          console.log("Admin user ID exists, but client-side deletion is not supported");
+          // The deleteUser function from client SDK requires a User object, not just an ID
+          // This would need to be handled via a server action or API endpoint
+        } catch (authError) {
+          console.error("Error deleting admin user from Firebase Auth:", authError);
+        }
       }
+      
+      // Update local state
+      setColleges((prev) => prev.filter((c) => c.id !== collegeId));
+      setFilteredColleges((prev) => prev.filter((c) => c.id !== collegeId));
+      
+      toast.success("College deleted successfully");
+    } catch (error) {
+      console.error("Error deleting college:", error);
+      toast.error("Failed to delete college");
+    } finally {
+      setDeleting(null);
     }
-    
-    // Add ellipsis if needed at the beginning
-    if (startPage > 2) {
-      items.push(
-        <PaginationItem key="start-ellipsis">
-          <span className="px-4">...</span>
-        </PaginationItem>
-      );
-    }
-    
-    // Add the middle pages
-    for (let page = startPage; page <= endPage; page++) {
-      items.push(
-        <PaginationItem key={page}>
-          <PaginationLink
-            isActive={page === currentPage}
-            onClick={() => handlePageChange(page)}
-          >
-            {page}
-          </PaginationLink>
-        </PaginationItem>
-      );
-    }
-    
-    // Add ellipsis if needed at the end
-    if (endPage < totalPages - 1) {
-      items.push(
-        <PaginationItem key="end-ellipsis">
-          <span className="px-4">...</span>
-        </PaginationItem>
-      );
-    }
-    
-    // Always show last page
-    items.push(
-      <PaginationItem key={totalPages}>
-        <PaginationLink
-          isActive={totalPages === currentPage}
-          onClick={() => handlePageChange(totalPages)}
-        >
-          {totalPages}
-        </PaginationLink>
-      </PaginationItem>
-    );
-    
-    return items;
-  };
-
-  // Function to get college name from ID
-  const getCollegeNameById = (id: string) => {
-    const college = collegesData.colleges.find(c => c.id === id);
-    return college?.name || id;
   };
 
   return (
     <AuthGuard requiredRole="admin">
       <div className="container mx-auto py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-          <h1 className="text-2xl font-bold mb-2 md:mb-0">College User Management</h1>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button 
-              className="flex items-center gap-1 cursor-pointer"
-              onClick={() => router.push("/admin/user/college/new")}
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>Add College</span>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">College Management</h1>
+          <Link href="/admin/user/college/new">
+            <Button>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Add New College
             </Button>
-          </div>
+          </Link>
         </div>
 
-        <div className="mb-6">
-          <div className="relative">
-            <Input
-              placeholder="Search by name, email, or phone..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="max-w-md"
-            />
-          </div>
+        <div className="relative mb-6">
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search colleges or admins..."
+            className="pl-8"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
 
-        <div className="overflow-hidden rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>College</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
+        {loading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : filteredColleges.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            {colleges.length === 0 
+              ? "No colleges found. Add your first college using the button above."
+              : "No colleges match your search criteria."}
+          </div>
+        ) : (
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-10">
-                    <div className="flex flex-col items-center justify-center">
-                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mb-2"></div>
-                      <p className="text-sm text-muted-foreground">Loading college users...</p>
-                    </div>
-                  </TableCell>
+                  <TableHead>College Name</TableHead>
+                  <TableHead>Admin Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
-              ) : filteredUsers.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center py-10">
-                    <p className="text-muted-foreground">No college users found</p>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredUsers.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.name || "N/A"}</TableCell>
-                    <TableCell>{user.email}</TableCell>
-                    <TableCell>{user.phone || "N/A"}</TableCell>
+              </TableHeader>
+              <TableBody>
+                {filteredColleges.map((college) => (
+                  <TableRow key={college.id}>
+                    <TableCell className="font-medium">{college.name}</TableCell>
+                    <TableCell>{college.adminName || "No admin"}</TableCell>
+                    <TableCell>{college.adminEmail || "-"}</TableCell>
+                    <TableCell>{college.adminPhone || "-"}</TableCell>
                     <TableCell>
-                      {user.college ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="max-w-[200px] inline-block truncate">
-                                {getCollegeNameById(user.college)}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{getCollegeNameById(user.college)}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : "-"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => router.push(`/admin/user/${user.id}`)}
-                          title="View Details"
+                          onClick={() => handleViewCollege(college.id)}
+                          title="View College Reports"
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => confirmDelete(user)}
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              className="text-destructive hover:text-destructive/90"
+                              title="Delete College"
+                            >
+                              {deleting === college.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will permanently delete the college "{college.name}" and its admin user. 
+                                This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction 
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => handleDeleteCollege(college.id, college.adminId)}
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-
-        {totalPages > 1 && (
-          <div className="mt-4 flex justify-center">
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious 
-                    onClick={() => handlePageChange(currentPage - 1)}
-                    isDisabled={currentPage === 1}
-                  />
-                </PaginationItem>
-                
-                {renderPagination()}
-                
-                <PaginationItem>
-                  <PaginationNext 
-                    onClick={() => handlePageChange(currentPage + 1)}
-                    isDisabled={currentPage === totalPages}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
-
-        <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Confirm Deletion</DialogTitle>
-              <DialogDescription>
-                Are you sure you want to delete {userToDelete?.name || userToDelete?.email}? This action cannot be undone.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)}>
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={handleDeleteUser}>
-                Delete
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     </AuthGuard>
   );

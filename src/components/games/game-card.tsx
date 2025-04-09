@@ -60,11 +60,19 @@ export function GameCard({ game, actionLabel = "Play", onAction, secondaryAction
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
             <div>
               <p className="font-semibold">Best Score</p>
-              <p className="text-muted-foreground">{game.stats.bestScore.toFixed(1)}</p>
+              <p className="text-muted-foreground">{game.stats.bestScore.toFixed(1)}
+                {game.stats.normalizedBestScore && (
+                  <span className="ml-1 text-primary">({game.stats.normalizedBestScore}/100)</span>
+                )}
+              </p>
             </div>
             <div>
               <p className="font-semibold">Last Score</p>
-              <p className="text-muted-foreground">{game.stats.lastScore.toFixed(1)}</p>
+              <p className="text-muted-foreground">{game.stats.lastScore.toFixed(1)}
+                {game.stats.normalizedLastScore && (
+                  <span className="ml-1 text-primary">({game.stats.normalizedLastScore}/100)</span>
+                )}
+              </p>
             </div>
             <div>
               <p className="font-semibold">Played</p>

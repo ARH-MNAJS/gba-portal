@@ -33,7 +33,8 @@ import { toast } from "sonner";
 import { Eye, Trash2, UserPlus, Upload } from "lucide-react";
 import { fetchUsers, deleteUser } from "@/lib/actions/user-actions";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import collegesData from "@/data/colleges.json";
+import { getCollegeById, getCollegeNameById } from "@/lib/utils/colleges";
+
 
 interface User {
   id: string;
@@ -56,6 +57,7 @@ export default function AdminStudentsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
   const usersPerPage = 10;
+  const [collegeNames, setCollegeNames] = useState<Record<string, string>>({});
 
   // Fetch users on load and when page changes
   useEffect(() => {
@@ -79,20 +81,64 @@ export default function AdminStudentsPage() {
     }
   }, [searchTerm, users]);
 
+  // Fetch college names when users are loaded
+  useEffect(() => {
+    if (users.length === 0) return;
+
+    const fetchCollegeNames = async () => {
+      const collegeIds = users
+        .map(user => user.college)
+        .filter((id): id is string => !!id);
+
+      const uniqueCollegeIds = [...new Set(collegeIds)];
+      const collegeNamesMap: Record<string, string> = {};
+
+      await Promise.all(
+        uniqueCollegeIds.map(async (collegeId) => {
+          try {
+            collegeNamesMap[collegeId] = await getCollegeNameById(collegeId);
+          } catch (error) {
+            console.error(`Error fetching college name for ${collegeId}:`, error);
+            collegeNamesMap[collegeId] = collegeId; // Fallback to ID
+          }
+        })
+      );
+
+      setCollegeNames(collegeNamesMap);
+    };
+
+    fetchCollegeNames();
+  }, [users]);
+
   const loadUsers = async () => {
     try {
       setLoading(true);
+      console.log('AdminStudentsPage: Loading students, page:', currentPage);
       
       // Call the server action to fetch users with role filter
       const result = await fetchUsers(currentPage, usersPerPage, "student");
+      console.log('AdminStudentsPage: Student data loaded:', result);
       
-      setUsers(result.users as User[]);
-      setTotalPages(result.totalPages);
-      setTotalUsers(result.totalUsers);
+      if (!result || !result.users || result.users.length === 0) {
+        console.log('AdminStudentsPage: No student data returned');
+        setUsers([]);
+        setFilteredUsers([]);
+        setTotalPages(1);
+        setTotalUsers(0);
+      } else {
+        setUsers(result.users as User[]);
+        setFilteredUsers(result.users as User[]);
+        setTotalPages(result.totalPages);
+        setTotalUsers(result.totalUsers);
+        console.log('AdminStudentsPage: Set student data in state:', result.users.length);
+      }
     } catch (error: any) {
-      console.error("Error fetching students:", error);
+      console.error("AdminStudentsPage: Error fetching students:", error);
       toast.error(error.message || "Failed to fetch students");
       setUsers([]);
+      setFilteredUsers([]);
+      setTotalPages(1);
+      setTotalUsers(0);
     } finally {
       setLoading(false);
     }
@@ -218,12 +264,6 @@ export default function AdminStudentsPage() {
     return items;
   };
 
-  // Function to get college name from ID
-  const getCollegeNameById = (id: string) => {
-    const college = collegesData.colleges.find(c => c.id === id);
-    return college?.name || id;
-  };
-
   return (
     <AuthGuard requiredRole="admin">
       <div className="container mx-auto py-6">
@@ -290,11 +330,11 @@ export default function AdminStudentsPage() {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="max-w-[200px] inline-block truncate">
-                                {getCollegeNameById(user.college)}
+                                {collegeNames[user.college] || user.college}
                               </span>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>{getCollegeNameById(user.college)}</p>
+                              <p>{collegeNames[user.college] || user.college}</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -332,18 +372,26 @@ export default function AdminStudentsPage() {
             <Pagination>
               <PaginationContent>
                 <PaginationItem>
-                  <PaginationPrevious 
-                    onClick={() => handlePageChange(currentPage - 1)}
-                    isDisabled={currentPage === 1}
+                  <PaginationPrevious
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (currentPage > 1) handlePageChange(currentPage - 1);
+                    }}
+                    className={currentPage <= 1 ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
                 
                 {renderPagination()}
                 
                 <PaginationItem>
-                  <PaginationNext 
-                    onClick={() => handlePageChange(currentPage + 1)}
-                    isDisabled={currentPage === totalPages}
+                  <PaginationNext
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (currentPage < totalPages) handlePageChange(currentPage + 1);
+                    }}
+                    className={currentPage >= totalPages ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
               </PaginationContent>

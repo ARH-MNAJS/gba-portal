@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,7 +16,7 @@ import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { auth, db } from "@/lib/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 
 const formSchema = z.object({
   email: z.string().email({
@@ -34,72 +34,155 @@ export default function AdminCollegeLoginPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
 
   const form = useForm({
     resolver: zodResolver(formSchema),
     defaultValues: {
       email: "",
       password: "",
-      role: "admin",
+      role: "",
     },
   });
+
+  // Watch for role changes to enable/disable fields
+  useEffect(() => {
+    const subscription = form.watch((value, { name }) => {
+      if (name === "role") {
+        setSelectedRole(value.role as string);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [form.watch]);
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     setIsLoading(true);
     setErrorMessage("");
+    let userCredential;
     
     try {
       console.log(`Attempting to sign in as ${values.role}:`, values.email);
       
       // Sign in with Firebase
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        values.email,
-        values.password
-      );
-      
-      // Check if user has the selected role
-      const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-      
-      if (!userDoc.exists()) {
-        throw new Error("User record not found");
+      try {
+        userCredential = await signInWithEmailAndPassword(
+          auth,
+          values.email,
+          values.password
+        );
+      } catch (authError: any) {
+        // Handle Firebase Auth errors immediately
+        console.error("Firebase Auth error:", authError);
+        
+        let errorMsg = "Login failed. Please check your credentials.";
+        
+        if (authError.code === 'auth/user-not-found' || authError.code === 'auth/wrong-password' || authError.code === 'auth/invalid-credential') {
+          errorMsg = "Invalid email or password";
+        } else if (authError.code === 'auth/too-many-requests') {
+          errorMsg = "Too many failed login attempts. Please try again later.";
+        } else if (authError.code === 'auth/user-disabled') {
+          errorMsg = "This account has been disabled. Please contact support.";
+        }
+        
+        setErrorMessage(errorMsg);
+        toast.error(errorMsg);
+        setIsLoading(false);
+        return;
       }
       
-      const userData = userDoc.data();
+      // If we reach here, authentication was successful
       
-      if (userData.role !== values.role) {
-        // Sign out if role doesn't match
+      // Check if user exists in the appropriate collection based on role
+      try {
+        if (values.role === "admin") {
+          // Check admin collection
+          const adminDoc = await getDoc(doc(db, 'admins', userCredential.user.uid));
+          
+          if (!adminDoc.exists()) {
+            console.log("Admin record not found for authenticated user");
+            await auth.signOut();
+            setErrorMessage("Your account is not registered as an admin. Please use the correct login portal.");
+            return;
+          }
+          
+          console.log("Admin login successful, redirecting");
+          toast.success("Logged in as Admin successfully!");
+          
+          // Redirect to admin dashboard
+          setTimeout(() => {
+            router.push('/admin');
+          }, 500);
+        } 
+        else if (values.role === "college") {
+          // Check colleges collection - first by adminId (UID)
+          const collegeByIdQuery = query(
+            collection(db, 'colleges'), 
+            where('adminId', '==', userCredential.user.uid)
+          );
+          const collegeByIdSnapshot = await getDocs(collegeByIdQuery);
+          
+          // If not found by ID, try finding by adminEmail
+          if (collegeByIdSnapshot.empty) {
+            const collegeByEmailQuery = query(
+              collection(db, 'colleges'), 
+              where('adminEmail', '==', values.email)
+            );
+            const collegeByEmailSnapshot = await getDocs(collegeByEmailQuery);
+            
+            if (collegeByEmailSnapshot.empty) {
+              console.log("College admin record not found for authenticated user");
+              await auth.signOut();
+              setErrorMessage("College admin record not found. Please contact your administrator.");
+              return;
+            }
+          }
+          
+          console.log("College login successful, redirecting");
+          toast.success("Logged in as College Admin successfully!");
+          
+          // Redirect to admin dashboard with limited access
+          setTimeout(() => {
+            router.push('/admin');
+          }, 500);
+        }
+      } catch (firestoreError: any) {
+        console.error("Firestore error:", firestoreError);
+        
+        // Handle Firestore permission errors
+        let errorMsg = "Unable to verify account permissions.";
+        
+        if (firestoreError.code === "permission-denied" || firestoreError.message.includes("Missing or insufficient permissions")) {
+          errorMsg = "You don't have access to the requested role. Please select the correct role.";
+        }
+        
+        // Sign out since we couldn't verify role
         await auth.signOut();
-        throw new Error(`You don't have access as a ${values.role}`);
+        setErrorMessage(errorMsg);
+        toast.error(errorMsg);
+        return;
       }
-
-      console.log(`Login successful as ${values.role}, redirecting`);
-      toast.success("Logged in successfully!");
-      
-      // Redirect based on role
-      setTimeout(() => {
-        router.push(`/${values.role}`);
-      }, 500);
     } catch (error: any) {
-      console.error("Login error:", error);
+      console.error("Unhandled login error:", error);
       
-      // Handle Firebase auth errors
-      let errorMsg = "Login failed. Please check your credentials.";
-      
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        errorMsg = "Invalid email or password";
-      } else if (error.code === 'auth/too-many-requests') {
-        errorMsg = "Too many failed login attempts. Please try again later.";
-      } else if (error.message) {
-        errorMsg = error.message;
-      }
-      
+      // Generic error handling for any other errors
+      const errorMsg = "An unexpected error occurred. Please try again later.";
       setErrorMessage(errorMsg);
       toast.error(errorMsg);
+      
+      // Make sure user is signed out on any error
+      try {
+        await auth.signOut();
+      } catch (e) {
+        // Silently handle sign out errors
+        console.error("Error signing out:", e);
+      }
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Determine if form fields should be disabled
+  const areFieldsDisabled = isLoading || !selectedRole;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -113,8 +196,9 @@ export default function AdminCollegeLoginPage() {
             </p>
           </div>
           {errorMessage && (
-            <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive rounded">
-              {errorMessage}
+            <div className="p-4 bg-destructive/10 border border-destructive/20 text-destructive rounded-md">
+              <p className="font-medium mb-1">Login Error</p>
+              <p className="text-sm">{errorMessage}</p>
             </div>
           )}
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -139,6 +223,11 @@ export default function AdminCollegeLoginPage() {
                   {form.formState.errors.role.message}
                 </p>
               )}
+              {!selectedRole && (
+                <p className="text-sm text-amber-500">
+                  Please select a role to continue
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -146,7 +235,7 @@ export default function AdminCollegeLoginPage() {
                 id="email"
                 placeholder="you@example.com"
                 type="email"
-                disabled={isLoading}
+                disabled={areFieldsDisabled}
                 {...form.register("email")}
               />
               {form.formState.errors.email && (
@@ -168,7 +257,7 @@ export default function AdminCollegeLoginPage() {
               <Input
                 id="password"
                 type="password"
-                disabled={isLoading}
+                disabled={areFieldsDisabled}
                 {...form.register("password")}
               />
               {form.formState.errors.password && (
@@ -177,11 +266,19 @@ export default function AdminCollegeLoginPage() {
                 </p>
               )}
             </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading && (
-                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground" />
+            <Button 
+              type="submit" 
+              className="w-full" 
+              disabled={areFieldsDisabled || !form.formState.isValid}
+            >
+              {isLoading ? (
+                <>
+                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground" />
+                  Signing in...
+                </>
+              ) : (
+                "Sign In"
               )}
-              Sign In
             </Button>
           </form>
           <div className="text-center text-sm text-muted-foreground">

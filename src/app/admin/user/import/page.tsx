@@ -32,8 +32,8 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import collegesData from "@/data/colleges.json";
 import { createUser, bulkImportUsers } from "@/lib/actions/user-actions";
+import { getCollegeById, getAllColleges, type College } from "@/lib/utils/colleges";
 
 // Define form schema for manual user addition
 const manualAddSchema = z.object({
@@ -80,6 +80,7 @@ export default function ImportUserPage() {
   const [csvFileName, setCsvFileName] = useState("");
   const [processingProgress, setProcessingProgress] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [colleges, setColleges] = useState<College[]>([]);
 
   // Form for manual adding
   const manualForm = useForm<ManualAddFormValues>({
@@ -109,16 +110,113 @@ export default function ImportUserPage() {
   // Update branches when college changes
   useEffect(() => {
     if (selectedCollege) {
-      const college = collegesData.colleges.find(c => c.id === selectedCollege);
+      console.log("Selected college ID:", selectedCollege);
+      
+      const college = colleges.find(c => c.id === selectedCollege);
+      console.log("Found college:", college);
+      
       if (college) {
-        setBranches(college.branches);
-        setYears(college.years);
+        console.log("College years data:", college.years);
+        console.log("College branches data:", college.branches);
+        
+        // Ensure branches and years are never empty arrays and set initial values
+        const validBranches = (college.branches && Array.isArray(college.branches) && college.branches.length > 0) 
+          ? college.branches.filter(Boolean) 
+          : ["General"];
+        
+        const validYears = (college.years && Array.isArray(college.years) && college.years.length > 0) 
+          ? college.years.filter(Boolean) 
+          : ["1"];
+        
+        console.log("Setting branches:", validBranches);
+        console.log("Setting years:", validYears);
+        
+        setBranches(validBranches);
+        setYears(validYears);
+        
+        // Auto-select the first branch and year if not set
+        if (!manualForm.getValues("branch")) {
+          manualForm.setValue("branch", validBranches[0]);
+        }
+        
+        if (!manualForm.getValues("year")) {
+          manualForm.setValue("year", validYears[0]);
+        }
+        
+        // Do the same for CSV form
+        if (!csvForm.getValues("branch")) {
+          csvForm.setValue("branch", validBranches[0]);
+        }
+        
+        if (!csvForm.getValues("year")) {
+          csvForm.setValue("year", validYears[0]);
+        }
       }
     } else {
-      setBranches([]);
-      setYears([]);
+      setBranches(["General"]);
+      setYears(["1"]);
+      
+      // Reset branch and year fields
+      manualForm.setValue("branch", "General");
+      manualForm.setValue("year", "1");
+      csvForm.setValue("branch", "General");
+      csvForm.setValue("year", "1");
     }
-  }, [selectedCollege]);
+  }, [selectedCollege, colleges, manualForm, csvForm]);
+
+  // Add useEffect to load colleges when component mounts
+  useEffect(() => {
+    const fetchColleges = async () => {
+      try {
+        console.log("Fetching colleges...");
+        const collegesList = await getAllColleges();
+        console.log("Colleges fetched:", collegesList);
+        
+        // Process each college to ensure it has valid branch and year data
+        const processedColleges = collegesList.map(college => {
+          console.log(`Processing college ${college.id}: ${college.name}`);
+          
+          // Parse years data if it's a string (handling possible data inconsistencies)
+          let processedYears = college.years;
+          if (typeof college.years === 'string') {
+            try {
+              processedYears = JSON.parse(college.years);
+              console.log(`Parsed years string for ${college.name}:`, processedYears);
+            } catch (e) {
+              processedYears = [college.years];
+              console.log(`Couldn't parse years, using as single value for ${college.name}:`, processedYears);
+            }
+          }
+          
+          // Parse branches data if it's a string
+          let processedBranches = college.branches;
+          if (typeof college.branches === 'string') {
+            try {
+              processedBranches = JSON.parse(college.branches);
+              console.log(`Parsed branches string for ${college.name}:`, processedBranches);
+            } catch (e) {
+              processedBranches = [college.branches];
+              console.log(`Couldn't parse branches, using as single value for ${college.name}:`, processedBranches);
+            }
+          }
+          
+          return {
+            ...college,
+            branches: processedBranches && Array.isArray(processedBranches) ? processedBranches.filter(Boolean) : ["General"],
+            years: processedYears && Array.isArray(processedYears) ? processedYears.filter(Boolean) : ["1"]
+          };
+        });
+        
+        console.log("Processed colleges:", processedColleges);
+        setColleges(processedColleges);
+      } catch (error) {
+        console.error('Error fetching colleges:', error);
+        toast.error('Failed to load colleges data');
+      }
+    };
+
+    fetchColleges();
+  }, []);
 
   // Handle manual form submission
   const handleManualSubmit = async (values: ManualAddFormValues) => {
@@ -274,7 +372,7 @@ export default function ImportUserPage() {
   };
 
   const getCollegeNameById = (id: string) => {
-    const college = collegesData.colleges.find(c => c.id === id);
+    const college = colleges.find(c => c.id === id);
     return college ? college.name : id;
   };
 
@@ -371,73 +469,93 @@ export default function ImportUserPage() {
                   
                   {/* Academic Information */}
                   <div className="space-y-4">
-                    <div>
+                    <div className="space-y-2">
                       <Label htmlFor="college">College</Label>
-                      <Select 
+                      <Select
+                        value={manualForm.watch("college")}
                         onValueChange={(value) => {
-                          setSelectedCollege(value);
                           manualForm.setValue("college", value);
+                          setSelectedCollege(value);
+                          // Reset branch and year when college changes
                           manualForm.setValue("branch", "");
                           manualForm.setValue("year", "");
                         }}
                       >
-                        <SelectTrigger id="college">
-                          <SelectValue placeholder="Select college" />
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select College" />
                         </SelectTrigger>
                         <SelectContent>
-                          {collegesData.colleges.map((college) => (
-                            <SelectItem key={college.id} value={college.id}>
+                          {colleges.map((college) => (
+                            <SelectItem key={college.id} value={college.id || "unknown"}>
                               {college.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       {manualForm.formState.errors.college && (
-                        <p className="text-sm text-red-500 mt-1">{manualForm.formState.errors.college.message}</p>
+                        <p className="text-destructive text-sm mt-1">
+                          {manualForm.formState.errors.college.message}
+                        </p>
                       )}
                     </div>
                     
-                    <div>
+                    {/* Branch Select - Manual Form */}
+                    <div className="space-y-2">
                       <Label htmlFor="branch">Branch</Label>
-                      <Select 
-                        disabled={branches.length === 0}
+                      <Select
+                        value={manualForm.watch("branch") || (branches.length > 0 ? branches[0] : "General")}
                         onValueChange={(value) => manualForm.setValue("branch", value)}
+                        disabled={!selectedCollege}
                       >
-                        <SelectTrigger id="branch">
-                          <SelectValue placeholder={branches.length === 0 ? "Select college first" : "Select branch"} />
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select Branch" />
                         </SelectTrigger>
                         <SelectContent>
-                          {branches.map((branch) => (
-                            <SelectItem key={branch} value={branch}>
-                              {branch}
-                            </SelectItem>
-                          ))}
+                          {branches.length > 0 ? (
+                            branches.map((branch) => (
+                              <SelectItem key={branch} value={branch || "default"}>
+                                {branch || "Default Branch"}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="default">Default Branch</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                       {manualForm.formState.errors.branch && (
-                        <p className="text-sm text-red-500 mt-1">{manualForm.formState.errors.branch.message}</p>
+                        <p className="text-destructive text-sm mt-1">
+                          {manualForm.formState.errors.branch.message}
+                        </p>
                       )}
                     </div>
                     
-                    <div>
+                    {/* Year Select - Manual Form */}
+                    <div className="space-y-2">
                       <Label htmlFor="year">Year</Label>
-                      <Select 
-                        disabled={years.length === 0}
+                      <Select
+                        value={manualForm.watch("year") || (years.length > 0 ? years[0] : "1")}
                         onValueChange={(value) => manualForm.setValue("year", value)}
+                        disabled={!selectedCollege}
                       >
-                        <SelectTrigger id="year">
-                          <SelectValue placeholder={years.length === 0 ? "Select college first" : "Select year"} />
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select Year" />
                         </SelectTrigger>
                         <SelectContent>
-                          {years.map((year) => (
-                            <SelectItem key={year} value={year}>
-                              {year}
-                            </SelectItem>
-                          ))}
+                          {years.length > 0 ? (
+                            years.map((year) => (
+                              <SelectItem key={year} value={year || "default"}>
+                                {year || "Default Year"}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="default">Default Year</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                       {manualForm.formState.errors.year && (
-                        <p className="text-sm text-red-500 mt-1">{manualForm.formState.errors.year.message}</p>
+                        <p className="text-destructive text-sm mt-1">
+                          {manualForm.formState.errors.year.message}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -477,73 +595,93 @@ export default function ImportUserPage() {
               
               <form onSubmit={csvForm.handleSubmit(handleCsvSubmit)} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
+                  <div className="space-y-2">
                     <Label htmlFor="csv-college">College</Label>
-                    <Select 
+                    <Select
+                      value={csvForm.watch("college")}
                       onValueChange={(value) => {
-                        setSelectedCollege(value);
                         csvForm.setValue("college", value);
+                        setSelectedCollege(value);
+                        // Reset branch and year
                         csvForm.setValue("branch", "");
                         csvForm.setValue("year", "");
                       }}
                     >
-                      <SelectTrigger id="csv-college">
-                        <SelectValue placeholder="Select college" />
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select College" />
                       </SelectTrigger>
                       <SelectContent>
-                        {collegesData.colleges.map((college) => (
-                          <SelectItem key={college.id} value={college.id}>
+                        {colleges.map((college) => (
+                          <SelectItem key={college.id} value={college.id || "unknown"}>
                             {college.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                     {csvForm.formState.errors.college && (
-                      <p className="text-sm text-red-500 mt-1">{csvForm.formState.errors.college.message}</p>
+                      <p className="text-destructive text-sm mt-1">
+                        {csvForm.formState.errors.college.message}
+                      </p>
                     )}
                   </div>
                   
-                  <div>
+                  {/* Branch Select - CSV Form */}
+                  <div className="space-y-2">
                     <Label htmlFor="csv-branch">Branch</Label>
-                    <Select 
-                      disabled={branches.length === 0}
+                    <Select
+                      value={csvForm.watch("branch") || (branches.length > 0 ? branches[0] : "General")}
                       onValueChange={(value) => csvForm.setValue("branch", value)}
+                      disabled={!selectedCollege}
                     >
-                      <SelectTrigger id="csv-branch">
-                        <SelectValue placeholder={branches.length === 0 ? "Select college first" : "Select branch"} />
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select Branch" />
                       </SelectTrigger>
                       <SelectContent>
-                        {branches.map((branch) => (
-                          <SelectItem key={branch} value={branch}>
-                            {branch}
-                          </SelectItem>
-                        ))}
+                        {branches.length > 0 ? (
+                          branches.map((branch) => (
+                            <SelectItem key={branch} value={branch || "default"}>
+                              {branch || "Default Branch"}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="default">Default Branch</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                     {csvForm.formState.errors.branch && (
-                      <p className="text-sm text-red-500 mt-1">{csvForm.formState.errors.branch.message}</p>
+                      <p className="text-destructive text-sm mt-1">
+                        {csvForm.formState.errors.branch.message}
+                      </p>
                     )}
                   </div>
                   
-                  <div>
+                  {/* Year Select - CSV Form */}
+                  <div className="space-y-2">
                     <Label htmlFor="csv-year">Year</Label>
-                    <Select 
-                      disabled={years.length === 0}
+                    <Select
+                      value={csvForm.watch("year") || (years.length > 0 ? years[0] : "1")}
                       onValueChange={(value) => csvForm.setValue("year", value)}
+                      disabled={!selectedCollege}
                     >
-                      <SelectTrigger id="csv-year">
-                        <SelectValue placeholder={years.length === 0 ? "Select college first" : "Select year"} />
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select Year" />
                       </SelectTrigger>
                       <SelectContent>
-                        {years.map((year) => (
-                          <SelectItem key={year} value={year}>
-                            {year}
-                          </SelectItem>
-                        ))}
+                        {years.length > 0 ? (
+                          years.map((year) => (
+                            <SelectItem key={year} value={year || "default"}>
+                              {year || "Default Year"}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="default">Default Year</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                     {csvForm.formState.errors.year && (
-                      <p className="text-sm text-red-500 mt-1">{csvForm.formState.errors.year.message}</p>
+                      <p className="text-destructive text-sm mt-1">
+                        {csvForm.formState.errors.year.message}
+                      </p>
                     )}
                   </div>
                 </div>
