@@ -9,7 +9,7 @@ import {
 } from 'firebase/auth';
 import { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { auth } from './firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import { toast } from 'sonner';
 
@@ -69,32 +69,63 @@ export const useRequireAuth = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Fetch additional user data from Firestore
         try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as Omit<User, 'id'>;
+          // Check if user is an admin
+          const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
+          if (adminDoc.exists()) {
+            const adminData = adminDoc.data();
             setUser({
               id: firebaseUser.uid,
-              ...userData,
+              email: adminData.email || firebaseUser.email || '',
+              role: 'admin',
+              name: adminData.name || '',
             });
-          } else {
-            // Check if the user might be a college admin
-            const collegeQuery = await getDoc(doc(db, 'colleges', firebaseUser.uid));
-            if (collegeQuery.exists() && collegeQuery.data().adminId === firebaseUser.uid) {
-              // College admin found using the adminId field in the college document
-              setUser({
-                id: firebaseUser.uid,
-                email: collegeQuery.data().adminEmail || firebaseUser.email || '',
-                role: 'admin', // Treat college admins as admins with limited scope
-                name: collegeQuery.data().adminName || '',
-                college: collegeQuery.id
-              });
-            } else {
-              console.error('User document does not exist in Firestore');
-              setUser(null);
-            }
+            setLoading(false);
+            return;
           }
+          
+          // Check if user is a student
+          const studentDoc = await getDoc(doc(db, 'students', firebaseUser.uid));
+          if (studentDoc.exists()) {
+            const studentData = studentDoc.data();
+            setUser({
+              id: firebaseUser.uid,
+              email: studentData.email || firebaseUser.email || '',
+              role: 'student',
+              name: studentData.name || '',
+              college: studentData.college || '',
+              branch: studentData.branch || '',
+              year: studentData.year || '',
+            });
+            setLoading(false);
+            return;
+          }
+          
+          // Check if user is a college admin using a query
+          const collegeQuery = query(
+            collection(db, 'colleges'),
+            where('adminId', '==', firebaseUser.uid)
+          );
+          const collegeSnapshot = await getDocs(collegeQuery);
+          
+          if (!collegeSnapshot.empty) {
+            // College admin found using the adminId field in the college document
+            const collegeDoc = collegeSnapshot.docs[0];
+            const collegeData = collegeDoc.data();
+            setUser({
+              id: firebaseUser.uid,
+              email: collegeData.adminEmail || firebaseUser.email || '',
+              role: 'college', // Use proper role 'college' instead of 'admin'
+              name: collegeData.adminName || '',
+              college: collegeDoc.id
+            });
+            setLoading(false);
+            return;
+          }
+          
+          // If no role-specific document found
+          console.error('User document does not exist in any collection');
+          setUser(null);
         } catch (error) {
           console.error('Error fetching user data:', error);
           setUser(null);
@@ -132,6 +163,8 @@ export const getRoleRedirectPath = (role: UserRole): string => {
       return '/admin';
     case 'student':
       return '/student';
+    case 'college':
+      return '/college';
     default:
       return '/login';
   }
@@ -143,6 +176,9 @@ export const getRoleRedirectPath = (role: UserRole): string => {
 export const hasRoleAccess = (userRole: UserRole, requiredRole: UserRole): boolean => {
   // Admin has access to all roles
   if (userRole === 'admin') return true;
+  
+  // College admin has access to college pages
+  if (userRole === 'college' && requiredRole === 'college') return true;
   
   // Other roles only have access to their own dashboards
   return userRole === requiredRole;
@@ -188,7 +224,7 @@ export const useAuthSignIn = () => {
           user: { 
             id: user.uid,
             email: collegeData.adminEmail || user.email || '',
-            role: 'admin', // Treat college admins as admins with limited scope
+            role: 'college', // Use proper role 'college' instead of 'admin'
             name: collegeData.adminName || '',
             college: collegeDoc.id
           } 

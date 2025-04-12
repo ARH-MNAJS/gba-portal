@@ -34,8 +34,17 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { createUser, bulkImportUsers } from "@/lib/actions/user-actions";
 import { getCollegeById, getAllColleges, type College } from "@/lib/utils/colleges";
+import { parse } from 'papaparse';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
-// Define form schema for manual user addition
+// Extend the College type to include the 'year' field
+interface CollegeWithYear extends Omit<College, 'years'> {
+  years?: string[];
+  year?: string[];
+}
+
+// Define form schema for manual student addition
 const manualAddSchema = z.object({
   name: z.string().min(1, { message: "Name is required" }),
   email: z.string().email({ message: "Invalid email format" }),
@@ -67,7 +76,7 @@ interface CsvRow {
   error?: string;
 }
 
-export default function ImportUserPage() {
+export default function ImportStudentsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("manual");
   const [selectedCollege, setSelectedCollege] = useState("");
@@ -80,7 +89,19 @@ export default function ImportUserPage() {
   const [csvFileName, setCsvFileName] = useState("");
   const [processingProgress, setProcessingProgress] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [colleges, setColleges] = useState<College[]>([]);
+  const [colleges, setColleges] = useState<CollegeWithYear[]>([]);
+  const [currentAction, setCurrentAction] = useState<"manual" | "csv">("manual");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [selectedBranch, setSelectedBranch] = useState<string>("");
+  const [selectedYear, setSelectedYear] = useState<string>("");
+  const [fileName, setFileName] = useState<string>("");
+  const [csvData, setCsvData] = useState<CsvRow[]>([]);
+  const [selectedCsvCollege, setSelectedCsvCollege] = useState<string>("");
+  const [selectedCsvBranch, setSelectedCsvBranch] = useState<string>("");
+  const [selectedCsvYear, setSelectedCsvYear] = useState<string>("");
+  const [showCsvPreview, setShowCsvPreview] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage] = useState<number>(10);
 
   // Form for manual adding
   const manualForm = useForm<ManualAddFormValues>({
@@ -116,7 +137,7 @@ export default function ImportUserPage() {
       console.log("Found college:", college);
       
       if (college) {
-        console.log("College years data:", college.years);
+        console.log("College years data:", college.year || college.years);
         console.log("College branches data:", college.branches);
         
         // Ensure branches and years are never empty arrays and set initial values
@@ -124,9 +145,12 @@ export default function ImportUserPage() {
           ? college.branches.filter(Boolean) 
           : ["General"];
         
-        const validYears = (college.years && Array.isArray(college.years) && college.years.length > 0) 
-          ? college.years.filter(Boolean) 
-          : ["1"];
+        // Use either year or years field from college
+        const validYears = (college.year && Array.isArray(college.year) && college.year.length > 0) 
+          ? college.year.filter(Boolean) 
+          : (college.years && Array.isArray(college.years) && college.years.length > 0)
+            ? college.years.filter(Boolean)
+            : ["1"];
         
         console.log("Setting branches:", validBranches);
         console.log("Setting years:", validYears);
@@ -134,33 +158,33 @@ export default function ImportUserPage() {
         setBranches(validBranches);
         setYears(validYears);
         
-        // Auto-select the first branch and year if not set
+        // Don't auto-select branch and year, just provide the options
         if (!manualForm.getValues("branch")) {
-          manualForm.setValue("branch", validBranches[0]);
+          manualForm.setValue("branch", "");
         }
         
         if (!manualForm.getValues("year")) {
-          manualForm.setValue("year", validYears[0]);
+          manualForm.setValue("year", "");
         }
         
         // Do the same for CSV form
         if (!csvForm.getValues("branch")) {
-          csvForm.setValue("branch", validBranches[0]);
+          csvForm.setValue("branch", "");
         }
         
         if (!csvForm.getValues("year")) {
-          csvForm.setValue("year", validYears[0]);
+          csvForm.setValue("year", "");
         }
       }
     } else {
       setBranches(["General"]);
       setYears(["1"]);
       
-      // Reset branch and year fields
-      manualForm.setValue("branch", "General");
-      manualForm.setValue("year", "1");
-      csvForm.setValue("branch", "General");
-      csvForm.setValue("year", "1");
+      // Reset branch and year fields without setting defaults
+      manualForm.setValue("branch", "");
+      manualForm.setValue("year", "");
+      csvForm.setValue("branch", "");
+      csvForm.setValue("year", "");
     }
   }, [selectedCollege, colleges, manualForm, csvForm]);
 
@@ -168,62 +192,61 @@ export default function ImportUserPage() {
   useEffect(() => {
     const fetchColleges = async () => {
       try {
-        console.log("Fetching colleges...");
-        const collegesList = await getAllColleges();
-        console.log("Colleges fetched:", collegesList);
+        console.log("Fetching colleges directly from Firestore...");
         
-        // Process each college to ensure it has valid branch and year data
-        const processedColleges = collegesList.map(college => {
-          console.log(`Processing college ${college.id}: ${college.name}`);
+        // Fetch colleges directly from Firestore
+        const collegesSnapshot = await getDocs(collection(db, 'colleges'));
+        const collegesList = collegesSnapshot.docs.map(doc => {
+          const data = doc.data();
           
-          // Parse years data if it's a string (handling possible data inconsistencies)
-          let processedYears = college.years;
-          if (typeof college.years === 'string') {
+          // Process years data
+          let processedYears = data.years || data.year || [];
+          if (typeof processedYears === 'string') {
             try {
-              processedYears = JSON.parse(college.years);
-              console.log(`Parsed years string for ${college.name}:`, processedYears);
+              processedYears = JSON.parse(processedYears);
             } catch (e) {
-              processedYears = [college.years];
-              console.log(`Couldn't parse years, using as single value for ${college.name}:`, processedYears);
+              processedYears = [processedYears];
             }
           }
           
-          // Parse branches data if it's a string
-          let processedBranches = college.branches;
-          if (typeof college.branches === 'string') {
+          // Process branches data
+          let processedBranches = data.branches || [];
+          if (typeof processedBranches === 'string') {
             try {
-              processedBranches = JSON.parse(college.branches);
-              console.log(`Parsed branches string for ${college.name}:`, processedBranches);
+              processedBranches = JSON.parse(processedBranches);
             } catch (e) {
-              processedBranches = [college.branches];
-              console.log(`Couldn't parse branches, using as single value for ${college.name}:`, processedBranches);
+              processedBranches = [processedBranches];
             }
           }
           
           return {
-            ...college,
-            branches: processedBranches && Array.isArray(processedBranches) ? processedBranches.filter(Boolean) : ["General"],
-            years: processedYears && Array.isArray(processedYears) ? processedYears.filter(Boolean) : ["1"]
+            id: doc.id,
+            name: data.name || 'Unknown College',
+            branches: Array.isArray(processedBranches) ? processedBranches : [],
+            years: Array.isArray(processedYears) ? processedYears : [],
+            year: Array.isArray(processedYears) ? processedYears : []
           };
         });
         
-        console.log("Processed colleges:", processedColleges);
-        setColleges(processedColleges);
+        console.log("Colleges fetched from Firestore:", collegesList);
+        
+        // Don't set default college
+        setColleges(collegesList);
       } catch (error) {
-        console.error('Error fetching colleges:', error);
-        toast.error('Failed to load colleges data');
+        console.error("Error loading colleges:", error);
+        toast.error("Failed to load colleges. Please try again.");
       }
     };
-
+    
     fetchColleges();
-  }, []);
+  }, [manualForm, csvForm]);
 
   // Handle manual form submission
   const handleManualSubmit = async (values: ManualAddFormValues) => {
     try {
       setIsSubmitting(true);
       
-      // Call the server action to create a user
+      // Call the server action to create a student
       await createUser({
         email: values.email,
         password: values.password,
@@ -235,11 +258,11 @@ export default function ImportUserPage() {
         year: values.year,
       });
 
-      toast.success("User created successfully");
+      toast.success("Student created successfully");
       manualForm.reset();
     } catch (error: any) {
-      console.error("Error creating user:", error);
-      toast.error(error.message || "Failed to create user");
+      console.error("Error creating student:", error);
+      toast.error(error.message || "Failed to create student");
     } finally {
       setIsSubmitting(false);
     }
@@ -249,52 +272,29 @@ export default function ImportUserPage() {
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
+    
+    const fileReader = new FileReader();
     setCsvFileName(file.name);
-    csvForm.setValue("file", file);
-
-    // Preview CSV contents
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      const rows = parseCSV(text);
-      setCsvPreview(rows.slice(0, 5)); // Preview first 5 rows
-    };
-    reader.readAsText(file);
-  };
-
-  // Parse CSV text to array of objects
-  const parseCSV = (text: string): CsvRow[] => {
-    const lines = text.split("\n");
-    const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
     
-    // Check if required headers exist
-    const requiredHeaders = ["name", "email", "phone"];
-    const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
-    
-    if (missingHeaders.length > 0) {
-      toast.error(`CSV is missing required headers: ${missingHeaders.join(", ")}`);
-      return [];
-    }
-
-    const result: CsvRow[] = [];
-    
-    for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue; // Skip empty lines
-      
-      const values = lines[i].split(",").map(v => v.trim());
-      const row: any = {};
-      
-      headers.forEach((header, index) => {
-        if (index < values.length) {
-          row[header] = values[index];
-        }
+    fileReader.onload = (event) => {
+      const csvText = event.target?.result as string;
+      const parsedData = parse(csvText, {
+        header: true,
+        dynamicTyping: true,
       });
       
-      result.push(row as CsvRow);
-    }
+      // Type assertion with strong typing
+      const typedRows = (parsedData.data as unknown[]).map(row => ({
+        name: String((row as any).name || ''),
+        email: String((row as any).email || ''),
+        phone: String((row as any).phone || '')
+      }));
+      
+      setCsvPreview(typedRows.slice(0, 5)); // Show first 5 rows as preview
+      csvForm.setValue("file", file);
+    };
     
-    return result;
+    fileReader.readAsText(file);
   };
 
   // Process CSV upload
@@ -314,9 +314,19 @@ export default function ImportUserPage() {
       
       reader.onload = async (event) => {
         const text = event.target?.result as string;
-        const rows = parseCSV(text);
+        const parsedData = parse(text, {
+          header: true,
+          dynamicTyping: true,
+        });
         
-        if (rows.length === 0) {
+        // Type assertion with strong typing
+        const typedRows = (parsedData.data as unknown[]).map(row => ({
+          name: String((row as any).name || ''),
+          email: String((row as any).email || ''),
+          phone: String((row as any).phone || '')
+        }));
+        
+        if (typedRows.length === 0) {
           toast.error("No valid data found in CSV");
           setCsvUploadStatus("idle");
           return;
@@ -325,15 +335,15 @@ export default function ImportUserPage() {
         try {
           setIsSubmitting(true);
           
-          // Call the server action to import users in bulk
-          const result = await bulkImportUsers(rows, {
+          // Call the server action to import students in bulk
+          const result = await bulkImportUsers(typedRows, {
             college: values.college,
             branch: values.branch,
             year: values.year
           });
           
           // Process results
-          const processedRows = rows.map((row, index) => {
+          const processedRows = typedRows.map((row, index) => {
             const errorItem = result.errors.find(e => e.email === row.email);
             if (errorItem) {
               return {
@@ -351,7 +361,7 @@ export default function ImportUserPage() {
           
           setCsvProcessed(processedRows);
           setProcessingProgress(100);
-          toast.success(`Imported ${result.success} of ${rows.length} users`);
+          toast.success(`Imported ${result.success} of ${typedRows.length} students`);
           setCsvUploadStatus("complete");
         } catch (error: any) {
           console.error("Error processing CSV:", error);
@@ -385,32 +395,127 @@ export default function ImportUserPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", "user_import_template.csv");
+    link.setAttribute("download", "student_import_template.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  // Update branches when college selection changes
+  useEffect(() => {
+    if (selectedCollege) {
+      const college = colleges.find((c) => c.id === selectedCollege);
+      if (college) {
+        console.log("Selected college:", college);
+        setBranches(college.branches || []);
+        setYears(college.year || college.years || []);
+        manualForm.setValue("college", selectedCollege);
+        setSelectedBranch("");
+        setSelectedYear("");
+      }
+    } else {
+      setBranches([]);
+      setYears([]);
+      setSelectedBranch("");
+      setSelectedYear("");
+    }
+  }, [selectedCollege, colleges, manualForm]);
+
+  // Update CSV branches when college selection changes
+  useEffect(() => {
+    if (selectedCsvCollege) {
+      const college = colleges.find((c) => c.id === selectedCsvCollege);
+      if (college) {
+        console.log("Selected CSV college:", college);
+        setBranches(college.branches || []);
+        setYears(college.year || college.years || []);
+        setSelectedCsvBranch("");
+        setSelectedCsvYear("");
+      }
+    }
+  }, [selectedCsvCollege, colleges]);
+
+  // CSV file handling
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFileName(file.name);
+      parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: function (results) {
+          // Ensure the parsed data is properly typed
+          const typedData = (results.data as unknown[]).map(row => ({
+            name: String((row as any).name || ''),
+            email: String((row as any).email || ''),
+            phone: String((row as any).phone || '')
+          }));
+          setCsvData(typedData);
+          setShowCsvPreview(true);
+        },
+      });
+    }
+  };
+
+  async function handleBulkImport() {
+    if (!selectedCsvCollege || !selectedCsvBranch || !selectedCsvYear) {
+      toast.error("Please select college, branch, and year.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const formattedData = csvData.map((row) => ({
+        ...row,
+        collegeId: selectedCsvCollege,
+        branch: selectedCsvBranch,
+        year: selectedCsvYear,
+        role: "student",
+      }));
+
+      await bulkImportUsers(formattedData, {
+        college: selectedCsvCollege,
+        branch: selectedCsvBranch,
+        year: selectedCsvYear
+      });
+      
+      toast.success(`${csvData.length} students have been imported.`);
+      
+      // Reset form
+      setCsvData([]);
+      setFileName("");
+      setSelectedCsvCollege("");
+      setSelectedCsvBranch("");
+      setSelectedCsvYear("");
+      setShowCsvPreview(false);
+    } catch (error) {
+      console.error("Error importing students:", error);
+      toast.error("There was an error importing students. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   return (
     <AuthGuard requiredRole="admin">
       <div className="container mx-auto py-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Import Users</h1>
-          <Button variant="outline" onClick={() => router.push("/admin/user")}>
-            Back to Users
+          <h1 className="text-2xl font-bold tracking-tight">Import Students</h1>
+          <Button variant="outline" onClick={() => router.push("/admin/user/students")}>
+            Back to Students
           </Button>
         </div>
 
         <Tabs defaultValue="manual" value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="manual">Manual Add</TabsTrigger>
-            <TabsTrigger value="bulk">Bulk Import (CSV)</TabsTrigger>
+            <TabsTrigger value="manual">Manual Add Student</TabsTrigger>
+            <TabsTrigger value="csv">Bulk Import Students</TabsTrigger>
           </TabsList>
           
           {/* Manual Add Form */}
           <TabsContent value="manual">
             <div className="border rounded-lg p-6 mt-6">
-              <h2 className="text-xl font-semibold mb-4">Add Single User</h2>
+              <h2 className="text-xl font-semibold mb-4">Add Single Student</h2>
               
               <form onSubmit={manualForm.handleSubmit(handleManualSubmit)} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -433,7 +538,7 @@ export default function ImportUserPage() {
                       <Input 
                         id="email" 
                         type="email" 
-                        placeholder="user@example.com" 
+                        placeholder="student@example.com" 
                         {...manualForm.register("email")} 
                       />
                       {manualForm.formState.errors.email && (
@@ -503,7 +608,7 @@ export default function ImportUserPage() {
                     <div className="space-y-2">
                       <Label htmlFor="branch">Branch</Label>
                       <Select
-                        value={manualForm.watch("branch") || (branches.length > 0 ? branches[0] : "General")}
+                        value={manualForm.watch("branch")}
                         onValueChange={(value) => manualForm.setValue("branch", value)}
                         disabled={!selectedCollege}
                       >
@@ -533,7 +638,7 @@ export default function ImportUserPage() {
                     <div className="space-y-2">
                       <Label htmlFor="year">Year</Label>
                       <Select
-                        value={manualForm.watch("year") || (years.length > 0 ? years[0] : "1")}
+                        value={manualForm.watch("year")}
                         onValueChange={(value) => manualForm.setValue("year", value)}
                         disabled={!selectedCollege}
                       >
@@ -562,8 +667,15 @@ export default function ImportUserPage() {
                 </div>
                 
                 <div className="flex justify-end mt-6">
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting ? "Adding User..." : "Add User"}
+                  <Button type="submit" disabled={manualForm.formState.isSubmitting}>
+                    {manualForm.formState.isSubmitting ? (
+                      <>
+                        <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary border-r-transparent"></div>
+                        Adding...
+                      </>
+                    ) : (
+                      'Add Student'
+                    )}
                   </Button>
                 </div>
               </form>
@@ -571,16 +683,16 @@ export default function ImportUserPage() {
           </TabsContent>
           
           {/* Bulk Import Form */}
-          <TabsContent value="bulk">
+          <TabsContent value="csv">
             <div className="border rounded-lg p-6 mt-6">
-              <h2 className="text-xl font-semibold mb-4">Bulk Import Users</h2>
+              <h2 className="text-xl font-semibold mb-4">Bulk Import Students</h2>
               
               <div className="mb-6">
                 <Alert>
                   <AlertTitle>CSV Format Instructions</AlertTitle>
                   <AlertDescription>
                     <p>The CSV file should contain the following columns: Name, Email, and Phone Number.</p>
-                    <p className="mt-2">All users will be imported with the college, branch, and year specified below.</p>
+                    <p className="mt-2">All students will be imported with the college, branch, and year specified below.</p>
                     <Button 
                       variant="outline" 
                       size="sm" 
@@ -601,7 +713,7 @@ export default function ImportUserPage() {
                       value={csvForm.watch("college")}
                       onValueChange={(value) => {
                         csvForm.setValue("college", value);
-                        setSelectedCollege(value);
+                        setSelectedCsvCollege(value);
                         // Reset branch and year
                         csvForm.setValue("branch", "");
                         csvForm.setValue("year", "");
@@ -629,9 +741,9 @@ export default function ImportUserPage() {
                   <div className="space-y-2">
                     <Label htmlFor="csv-branch">Branch</Label>
                     <Select
-                      value={csvForm.watch("branch") || (branches.length > 0 ? branches[0] : "General")}
+                      value={csvForm.watch("branch")}
                       onValueChange={(value) => csvForm.setValue("branch", value)}
-                      disabled={!selectedCollege}
+                      disabled={!selectedCsvCollege}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select Branch" />
@@ -659,9 +771,9 @@ export default function ImportUserPage() {
                   <div className="space-y-2">
                     <Label htmlFor="csv-year">Year</Label>
                     <Select
-                      value={csvForm.watch("year") || (years.length > 0 ? years[0] : "1")}
+                      value={csvForm.watch("year")}
                       onValueChange={(value) => csvForm.setValue("year", value)}
-                      disabled={!selectedCollege}
+                      disabled={!selectedCsvCollege}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select Year" />
@@ -692,7 +804,7 @@ export default function ImportUserPage() {
                     id="csv-file"
                     type="file"
                     accept=".csv"
-                    onChange={handleCsvFileChange}
+                    onChange={handleFileUpload}
                     className="mt-1"
                   />
                   {csvForm.formState.errors.file && (
@@ -735,7 +847,7 @@ export default function ImportUserPage() {
                   <Button type="submit" disabled={isSubmitting || csvUploadStatus === "processing"}>
                     {isSubmitting || csvUploadStatus === "processing" 
                       ? "Processing..." 
-                      : "Import Users"}
+                      : "Import Students"}
                   </Button>
                 </div>
               </form>
@@ -754,8 +866,8 @@ export default function ImportUserPage() {
               </DialogTitle>
               <DialogDescription>
                 {csvUploadStatus === "processing" 
-                  ? `Importing users from ${csvFileName}. Please do not close this window.` 
-                  : `Completed importing users from ${csvFileName}.`}
+                  ? `Importing students from ${csvFileName}. Please do not close this window.` 
+                  : `Completed importing students from ${csvFileName}.`}
               </DialogDescription>
             </DialogHeader>
             
@@ -798,9 +910,7 @@ export default function ImportUserPage() {
                           <td className="px-6 py-4 whitespace-nowrap">{row.name}</td>
                           <td className="px-6 py-4 whitespace-nowrap">{row.email}</td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            {row.status === "error" && (
-                              <span className="text-red-500 text-sm">{row.error}</span>
-                            )}
+                            {row.status === "error" ? row.error : "Imported successfully"}
                           </td>
                         </tr>
                       ))}
@@ -811,17 +921,22 @@ export default function ImportUserPage() {
             </div>
             
             <DialogFooter>
-              {csvUploadStatus === "complete" && (
-                <Button onClick={() => {
+              <Button
+                type="button"
+                onClick={() => {
                   setShowUploadDialog(false);
-                  setCsvUploadStatus("idle");
-                  setCsvProcessed([]);
-                  setCsvPreview([]);
-                  csvForm.reset();
-                }}>
-                  Close
-                </Button>
-              )}
+                  if (csvUploadStatus === "complete") {
+                    // Reset the form after successful import
+                    csvForm.reset();
+                    setCsvPreview([]);
+                    setCsvProcessed([]);
+                    setCsvFileName("");
+                    setCsvUploadStatus("idle");
+                  }
+                }}
+              >
+                {csvUploadStatus === "complete" ? "Done" : "Cancel"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

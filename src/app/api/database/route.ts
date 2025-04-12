@@ -34,9 +34,8 @@ export async function POST(request: NextRequest) {
     
     // Check if collections exist by querying them
     try {
-      // Check users collection
-      const usersSnapshot = await adminDb.collection('users').limit(1).get();
-      results.collections.users = !usersSnapshot.empty;
+      // No need to check users collection as it's no longer used
+      results.collections.users = false; // Mark as false since we don't use this collection
       
       // Check students collection
       const studentsSnapshot = await adminDb.collection('students').limit(1).get();

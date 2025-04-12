@@ -114,7 +114,7 @@ export default function AdminCollegeLoginPage() {
           }, 500);
         } 
         else if (values.role === "college") {
-          // Check colleges collection - first by adminId (UID)
+          // Check colleges collection by adminId (UID)
           const collegeByIdQuery = query(
             collection(db, 'colleges'), 
             where('adminId', '==', userCredential.user.uid)
@@ -140,9 +140,9 @@ export default function AdminCollegeLoginPage() {
           console.log("College login successful, redirecting");
           toast.success("Logged in as College Admin successfully!");
           
-          // Redirect to admin dashboard with limited access
+          // Redirect to college dashboard instead of admin dashboard
           setTimeout(() => {
-            router.push('/admin');
+            router.push('/college');
           }, 500);
         }
       } catch (firestoreError: any) {

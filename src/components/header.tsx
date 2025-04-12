@@ -56,9 +56,6 @@ export function Header() {
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                  <Link href="/profile">Profile</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
                   <Link href={`/${user.role}`}>Dashboard</Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

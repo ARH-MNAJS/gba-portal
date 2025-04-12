@@ -28,10 +28,11 @@ import {
 } from "@/components/ui/form";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { fetchSignInMethodsForEmail } from "firebase/auth";
+import { doc, getDocs, collection, query, where } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { createCollege } from "@/lib/utils/colleges";
+import { createUser } from "@/lib/actions/user-actions";
 import { PlusCircle, X } from "lucide-react";
 
 // Define form schema for college creation with admin
@@ -119,17 +120,57 @@ export default function AddCollegePage() {
 
   // Handle form submission
   const onSubmit = async (values: CollegeFormValues) => {
+    // Prevent double submission
+    if (isSubmitting) return;
     setIsSubmitting(true);
     
     try {
-      // Create Firebase Auth user for the admin
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        values.adminEmail,
-        values.adminPassword
-      );
+      // Check if the email is already in use
+      try {
+        // Check if the email exists in Firebase Auth
+        const methods = await fetchSignInMethodsForEmail(auth, values.adminEmail);
+        
+        if (methods && methods.length > 0) {
+          // Email exists, check if it's associated with a college
+          const collegesRef = collection(db, "colleges");
+          const q = query(collegesRef, where("adminEmail", "==", values.adminEmail));
+          const snapshot = await getDocs(q);
+          
+          // If no college is using this email, the user might be orphaned in Auth
+          if (snapshot.empty) {
+            toast.error(
+              "This email is already registered but not associated with a college. " +
+              "Please use a different email or contact your administrator to clean up the orphaned account.",
+              { duration: 8000 }
+            );
+            setIsSubmitting(false);
+            return;
+          } else {
+            toast.error("This email is already used by another college admin");
+            setIsSubmitting(false);
+            return;
+          }
+        }
+      } catch (authCheckError) {
+        // Continue if there's an error checking the email
+        console.error("Error checking email:", authCheckError);
+      }
       
-      const adminId = userCredential.user.uid;
+      // Create admin user using the server action instead of client-side auth
+      const result = await createUser({
+        email: values.adminEmail,
+        password: values.adminPassword,
+        name: values.adminName,
+        role: 'college',
+        phone: values.adminPhone,
+        college: values.collegeId,
+      });
+      
+      if (!result.success) {
+        throw new Error(result.error || "Failed to create admin user");
+      }
+      
+      const adminId = result.userId;
       
       // Create college document with admin details embedded
       await createCollege(
@@ -142,6 +183,7 @@ export default function AddCollegePage() {
           adminEmail: values.adminEmail,
           adminPhone: values.adminPhone,
           adminId: adminId,
+          collegeId: values.collegeId, // Explicitly add collegeId field
         },
         values.collegeId
       );
@@ -150,7 +192,15 @@ export default function AddCollegePage() {
       router.push("/admin/user/college");
     } catch (error: any) {
       console.error("Error creating college:", error);
-      toast.error(error.message || "Failed to create college");
+      
+      if (error.code === "auth/email-already-in-use") {
+        toast.error(
+          "This email is already in use. If you're certain this email should be available, please contact your administrator.",
+          { duration: 8000 }
+        );
+      } else {
+        toast.error(error.message || "Failed to create college");
+      }
     } finally {
       setIsSubmitting(false);
     }

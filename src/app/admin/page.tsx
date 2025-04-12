@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AuthGuard } from "@/components/auth-guard";
-import { Users, School, BarChart2, Brain } from "lucide-react";
+import { Users, School, GraduationCap, Brain, Gamepad2 } from "lucide-react";
 import { useSession } from "@/providers/session-provider";
 import { db } from "@/lib/firebase";
 import { collection, getDocs, query, where, Timestamp } from "firebase/firestore";
@@ -120,7 +120,7 @@ export default function AdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{isLoading ? "..." : stats.students.total}</div>
             <p className="text-xs text-muted-foreground">
-              +{isLoading ? "..." : stats.students.growth} estimated new
+              Active students
             </p>
           </CardContent>
         </Card>
@@ -134,7 +134,7 @@ export default function AdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{isLoading ? "..." : stats.colleges.total}</div>
             <p className="text-xs text-muted-foreground">
-              +{isLoading ? "..." : stats.colleges.growth} from last month
+              Active colleges
             </p>
           </CardContent>
         </Card>
@@ -143,7 +143,7 @@ export default function AdminDashboardPage() {
             <CardTitle className="text-sm font-medium">
               Assessments
             </CardTitle>
-            <Brain className="h-4 w-4 text-muted-foreground" />
+            <GraduationCap className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{isLoading ? "..." : stats.assessments.total}</div>
@@ -157,12 +157,12 @@ export default function AdminDashboardPage() {
             <CardTitle className="text-sm font-medium">
               Available Games
             </CardTitle>
-            <BarChart2 className="h-4 w-4 text-muted-foreground" />
+            <Gamepad2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{isLoading ? "..." : stats.games.total}</div>
             <p className="text-xs text-muted-foreground">
-              Predefined games
+              Interactive games
             </p>
           </CardContent>
         </Card>

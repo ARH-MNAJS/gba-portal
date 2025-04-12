@@ -11,12 +11,16 @@ export function DatabaseInitializer() {
       // Check if collections exist in Firebase
       const checkFirebaseSetup = async () => {
         try {
-          // Check users collection
-          const usersQuery = query(collection(db, 'users'), limit(1));
-          const usersSnapshot = await getDocs(usersQuery);
+          // Check students collection (we don't use users collection anymore)
+          const studentsQuery = query(collection(db, 'students'), limit(1));
+          const studentsSnapshot = await getDocs(studentsQuery);
           
-          if (usersSnapshot.empty) {
-            console.log('Users collection is empty or does not exist. Please run setup from the /api/db-setup page.');
+          // Check colleges collection
+          const collegesQuery = query(collection(db, 'colleges'), limit(1));
+          const collegesSnapshot = await getDocs(collegesQuery);
+          
+          if (studentsSnapshot.empty && collegesSnapshot.empty) {
+            console.log('Students and colleges collections are empty or do not exist. Please run setup from the /api/db-setup page.');
           } else {
             console.log('Firebase collections initialized.');
           }

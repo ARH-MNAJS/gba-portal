@@ -12,6 +12,8 @@ import {
 } from "@/lib/utils/games";
 import { getGameComponent, getGameById } from "@/games/index";
 import { toast } from "sonner";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 interface ClientGameComponentProps {
   gameId: string;
@@ -35,21 +37,40 @@ export function ClientGameComponent({ gameId }: ClientGameComponentProps) {
         if (sessionLoading) return;
         
         if (!user) {
-          console.error("User not authenticated");
+          // This is expected when a user signs out, so use info level instead of error
+          console.info("No authenticated user found - user may have signed out");
           setError("Please sign in to play games");
           setLoading(false);
           return;
         }
         
-        // Check if user has a college assigned
-        if (!user.college) {
-          console.error("User has no college assigned:", user);
-          setError("You don't have a college assigned to your account.");
-          setLoading(false);
-          return;
+        // Check if user has a college assigned and try to get it if missing
+        let collegeId = user.college;
+        
+        if (!collegeId || collegeId === "") {
+          console.log("User has no college assigned, attempting to fetch from user document");
+          
+          // Try to fetch collegeId from the user document directly
+          if (user.id) {
+            const userRef = doc(db, 'users', user.id);
+            const userDoc = await getDoc(userRef);
+            
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              collegeId = userData.college || userData.collegeId;
+              console.log("Found college ID from user document:", collegeId);
+            }
+          }
+          
+          if (!collegeId || collegeId === "") {
+            console.error("User has no college assigned after document check:", user);
+            setError("Your account is not linked to any college. Please contact your administrator.");
+            setLoading(false);
+            return;
+          }
         }
         
-        console.log("Loading game", gameId, "for college", user.college);
+        console.log("Loading game", gameId, "for college", collegeId);
         
         // Load game data
         const gameData = await fetchGame(gameId);
@@ -61,7 +82,7 @@ export function ClientGameComponent({ gameId }: ClientGameComponentProps) {
         }
         
         // Check if the game is assigned to this student's college
-        const assignments = await getCollegeGameAssignments(user.college);
+        const assignments = await getCollegeGameAssignments(collegeId);
         console.log("College assignments:", assignments);
         
         // Look for the game in the assignments using gameId field

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { useSession } from "@/providers/session-provider";
 import { ThemeToggle } from "./theme-toggle";
-import { Home, Users, BarChartIcon, ChevronDown, GraduationCap, Building2, ShieldCheck, Brain } from "lucide-react";
+import { Home, Users, Gamepad2, BarChartIcon, ChevronDown, Brain, GraduationCap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -51,9 +51,9 @@ export const sidebarNavItems = [
     ]
   },
   {
-    title: "Practice",
+    title: "Games",
     href: "/admin/practice",
-    icon: Brain,
+    icon:  Gamepad2,
   },
   {
     title: "Assessments",
@@ -132,9 +132,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                 className="flex items-center" 
                 onClick={() => setOpen(false)}
               >
-                <span className="text-xl font-bold">
-                  GBA Portal
-                </span>
               </Link>
             </div>
             <div className="flex-1 overflow-auto py-2">
@@ -218,13 +215,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                       </div>
                     </div>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem asChild>
-                      <Link href="/profile">Profile</Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem asChild>
-                      <Link href="/admin/settings">Settings</Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem
                       className="cursor-pointer"
                       onSelect={signOutHandler}
@@ -247,11 +237,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
         )}
       >
         <div className="flex h-14 items-center border-b px-4">
-          <Link href="/" className="flex items-center">
-            <span className="text-xl font-bold">
-              GBA Portal
-            </span>
-          </Link>
         </div>
         <div className="flex-1 overflow-auto py-4">
           <nav className="grid items-start px-2 text-sm font-medium">
@@ -331,13 +316,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
                     <p className="text-xs text-muted-foreground">Admin</p>
                   </div>
                 </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href="/profile">Profile</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/admin/settings">Settings</Link>
-                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="cursor-pointer"

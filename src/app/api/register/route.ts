@@ -52,13 +52,7 @@ export async function POST(request: NextRequest) {
       const userId = userRecord.uid;
       const timestamp = new Date().toISOString();
       
-      // Create user in the users collection
-      await adminDb.collection('users').doc(userId).set({
-        email: email.toLowerCase(),
-        role,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
+      // Store user data directly in the role-specific collection
       
       // Add role-specific data
       if (role === 'student') {

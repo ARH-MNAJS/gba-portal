@@ -2,51 +2,90 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { use } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { getCollegeById, getCollegeByAdminId } from '@/lib/utils/colleges';
+import type { College } from '@/lib/utils/colleges';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PieChart } from '@/components/charts/PieChart';
+import { Button } from '@/components/ui/button';
+import { 
+  PieChart, Pie, Cell, ResponsiveContainer, 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend 
+} from 'recharts';
+import { ArrowLeft, Download, Eye } from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { getGameById } from '@/games';
+import { format, isValid } from 'date-fns';
 
-interface PracticeStats {
-  totalPlays: number;
-  averageScore: number;
-  highestScore: number;
-  lowestScore: number;
-  completionRate: number;
+// Helper function to safely format dates
+const safeFormatDate = (dateValue: any, formatString: string = "MMM dd, yyyy") => {
+  if (!dateValue) return "Never";
+  
+  try {
+    // Handle Firestore timestamp objects
+    if (dateValue && typeof dateValue === 'object' && dateValue.toDate && typeof dateValue.toDate === 'function') {
+      const date = dateValue.toDate();
+      return format(date, formatString);
+    }
+    
+    // Handle string/number timestamps
+    const date = new Date(dateValue);
+    if (isValid(date)) {
+      return format(date, formatString);
+    }
+    
+    return "Invalid date";
+  } catch (error) {
+    console.error("Error formatting date:", error);
+    return "Invalid date";
+  }
+};
+
+interface GameReportPageProps {
+  params: {
+    collegeId: string;
+    gameId: string;
+  };
 }
 
-interface Student {
+interface StudentData {
   id: string;
-  name: string;
-  bestScore: number;
-  plays: number;
-  lastPlayed: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  [key: string]: any; // Allow for other properties
 }
 
-export default function GamePracticeReportPage({ 
-  params 
-}: { 
-  params: { collegeId: string; gameId: string } 
-}) {
+export default function GamePracticeReportPage({ params }: GameReportPageProps) {
   const router = useRouter();
+  
+  // Unwrap params using React.use() with proper type casting
+  const unwrappedParams = use(params as any) as {collegeId: string; gameId: string};
+  const collegeId = unwrappedParams.collegeId;
+  const gameId = unwrappedParams.gameId;
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [collegeName, setCollegeName] = useState<string>('College');
   const [gameName, setGameName] = useState<string>('Game');
-  const [students, setStudents] = useState<Student[]>([]);
-  const [practiceStats, setPracticeStats] = useState<PracticeStats>({
-    totalPlays: 0,
-    averageScore: 0,
-    highestScore: 0,
-    lowestScore: 0,
-    completionRate: 0,
-  });
-  const [chartData, setChartData] = useState<{ labels: string[]; data: number[] }>({
-    labels: [],
-    data: [],
-  });
+  const [students, setStudents] = useState<StudentData[]>([]);
+  const [pieChartData, setPieChartData] = useState<any[]>([]);
+  const [barChartData, setBarChartData] = useState<any[]>([]);
+  const [currentCollegeId, setCurrentCollegeId] = useState<string>(collegeId);
+  const [currentGameId, setCurrentGameId] = useState<string>(gameId);
+
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
   useEffect(() => {
     async function loadData() {
@@ -54,109 +93,169 @@ export default function GamePracticeReportPage({
         setLoading(true);
         setError(null);
 
-        // First try to get college directly
-        let college = await getCollegeById(params.collegeId);
-        
-        // If not found, check if it's an admin ID
+        // Get college details
+        let college: College | null = await getCollegeById(collegeId);
         if (!college) {
-          college = await getCollegeByAdminId(params.collegeId);
+          const adminCollege = await getCollegeByAdminId(collegeId);
+          if (adminCollege) {
+            college = adminCollege;
+          } else {
+            setError('College not found');
+            setLoading(false);
+            return;
+          }
         }
 
-        if (!college) {
-          setError('College not found');
-          return;
-        }
-
+        setCurrentCollegeId(college.id);
         setCollegeName(college.name);
 
         // Get game details
-        const gameDoc = await getDocs(query(collection(db, 'games'), where('id', '==', params.gameId)));
-        if (!gameDoc.empty) {
-          setGameName(gameDoc.docs[0].data().name || params.gameId);
-        }
+        const gameInfo = getGameById(gameId);
+        setGameName(gameInfo?.name || 'Game');
+        setCurrentGameId(gameId);
 
         // Get all students for this college
         const studentsSnapshot = await getDocs(
           query(collection(db, 'students'), where('collegeId', '==', college.id))
         );
 
-        const studentIds = studentsSnapshot.docs.map(doc => doc.id);
-        const studentsMap = new Map(
-          studentsSnapshot.docs.map(doc => [doc.id, doc.data().name])
-        );
+        const totalStudents = studentsSnapshot.docs.length;
+        const studentsList = studentsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as StudentData[];
 
         // Get game stats for these students
         const gameStatsQuery = query(
           collection(db, 'gameStats'),
-          where('userId', 'in', studentIds),
-          where('gameId', '==', params.gameId)
+          where('collegeId', '==', college.id),
+          where('gameId', '==', gameId)
         );
 
         const gameStatsSnapshot = await getDocs(gameStatsQuery);
         
-        const studentsData: Student[] = [];
-        let totalScore = 0;
-        let highestScore = 0;
-        let lowestScore = Infinity;
-        let totalPlays = 0;
-        let completedGames = 0;
-
-        gameStatsSnapshot.docs.forEach(doc => {
+        // Process students with game stats
+        const studentsWithStats = gameStatsSnapshot.docs.map(doc => {
           const data = doc.data();
-          const score = data.normalizedBestScore || 0;
+          const studentId = data.userId;
+          const student = studentsList.find(s => s.id === studentId) || {} as StudentData;
           
-          studentsData.push({
+          // Create a displayName based on available properties
+          const displayName = student.name || 
+                             (student.firstName && student.lastName 
+                              ? `${student.firstName} ${student.lastName}` 
+                              : 'Unknown Student');
+          
+          return {
             id: doc.id,
-            name: studentsMap.get(data.userId) || 'Unknown Student',
-            bestScore: score,
+            userId: studentId,
+            name: displayName,
+            email: student.email || '',
+            phone: student.phone || '',
+            totalScore: data.totalScore || 0,
+            bestScore: data.normalizedBestScore || 0,
             plays: data.plays || 0,
             lastPlayed: data.lastPlayed || '',
-          });
-
-          totalScore += score;
-          highestScore = Math.max(highestScore, score);
-          lowestScore = Math.min(lowestScore, score);
-          totalPlays += data.plays || 0;
-          if (score > 0) completedGames++;
+          };
         });
+        
+        // Sort students by total score
+        studentsWithStats.sort((a, b) => b.totalScore - a.totalScore);
+        setStudents(studentsWithStats);
 
-        // Sort students by best score
-        studentsData.sort((a, b) => b.bestScore - a.bestScore);
+        // Prepare pie chart data
+        const studentsWithPractice = studentsWithStats.length;
+        const studentsWithoutPractice = totalStudents - studentsWithPractice;
+        
+        setPieChartData([
+          { name: 'Practiced', value: studentsWithPractice, color: '#0088FE' },
+          { name: 'Not Practiced', value: studentsWithoutPractice, color: '#FFBB28' }
+        ]);
 
-        setStudents(studentsData);
-        setPracticeStats({
-          totalPlays,
-          averageScore: studentsData.length ? totalScore / studentsData.length : 0,
-          highestScore,
-          lowestScore: lowestScore === Infinity ? 0 : lowestScore,
-          completionRate: studentsData.length ? (completedGames / studentsData.length) * 100 : 0,
-        });
+        // Get games played by all students in this college
+        const allGamesStatsQuery = query(
+          collection(db, 'gameStats'),
+          where('collegeId', '==', college.id)
+        );
 
-        // Prepare chart data
-        const scoreRanges = ['0-20', '21-40', '41-60', '61-80', '81-100'];
-        const scoreDistribution = new Array(5).fill(0);
-
-        studentsData.forEach(student => {
-          const score = student.bestScore;
-          const rangeIndex = Math.min(Math.floor(score / 20), 4);
-          scoreDistribution[rangeIndex]++;
-        });
-
-        setChartData({
-          labels: scoreRanges,
-          data: scoreDistribution,
-        });
-
+        const allGamesSnapshot = await getDocs(allGamesStatsQuery);
+        
+        // Count plays by game
+        const gamePlayCounts: {[key: string]: {plays: number, name: string}} = {};
+        
+        await Promise.all(allGamesSnapshot.docs.map(async (doc) => {
+          const data = doc.data();
+          const gameId = data.gameId;
+          
+          if (!gamePlayCounts[gameId]) {
+            const gameInfo = getGameById(gameId);
+            const gameName = gameInfo?.name || gameId;
+            
+            gamePlayCounts[gameId] = {
+              plays: 0,
+              name: gameName
+            };
+          }
+          
+          gamePlayCounts[gameId].plays += (data.plays || 0);
+        }));
+        
+        // Sort and get top 5 games
+        const topGames = Object.entries(gamePlayCounts)
+          .map(([id, data]) => ({
+            gameId: id,
+            name: data.name,
+            plays: data.plays
+          }))
+          .sort((a, b) => b.plays - a.plays)
+          .slice(0, 5);
+        
+        setBarChartData(topGames);
+        setLoading(false);
       } catch (err) {
         console.error('Error loading data:', err);
         setError('Failed to load report data');
-      } finally {
         setLoading(false);
       }
     }
 
     loadData();
-  }, [params.collegeId, params.gameId]);
+  }, [collegeId, gameId]);
+
+  const handleViewDetailedReport = (studentId: string) => {
+    router.push(`/admin/reports/practice/${currentCollegeId}/game/${currentGameId}/student/${studentId}`);
+  };
+
+  const navigateBack = () => {
+    router.push(`/admin/reports/practice/${currentCollegeId}`);
+  };
+
+  const exportToCSV = () => {
+    const headers = ['Student Name', 'Email', 'Phone', 'Total Score', 'Best Score', 'Plays', 'Last Played'];
+    const csvData = students.map(student => [
+      student.name,
+      student.email,
+      student.phone,
+      student.totalScore.toString(),
+      student.bestScore.toString(),
+      student.plays.toString(),
+      safeFormatDate(student.lastPlayed)
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...csvData.map(row => row.join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${gameName}_${collegeName}_report.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   if (loading) {
     return <div className="space-y-4">
@@ -171,72 +270,119 @@ export default function GamePracticeReportPage({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">{gameName} Practice Report - {collegeName}</h1>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="icon" onClick={navigateBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <h1 className="text-2xl font-bold">{gameName} Practice Report - {collegeName}</h1>
+      </div>
       
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Practice Statistics</CardTitle>
+            <CardTitle>Student Participation</CardTitle>
+            <CardDescription>
+              Students who have practiced this game
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span>Total Plays:</span>
-                <span>{practiceStats.totalPlays}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Average Score:</span>
-                <span>{practiceStats.averageScore.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Highest Score:</span>
-                <span>{practiceStats.highestScore.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Lowest Score:</span>
-                <span>{practiceStats.lowestScore.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Completion Rate:</span>
-                <span>{practiceStats.completionRate.toFixed(1)}%</span>
-              </div>
-            </div>
+          <CardContent className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieChartData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={100}
+                  fill="#8884d8"
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                >
+                  {pieChartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Score Distribution</CardTitle>
+            <CardTitle>Most Practiced Games</CardTitle>
+            <CardDescription>
+              Top games practiced by students
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            <PieChart labels={chartData.labels} data={chartData.data} />
+          <CardContent className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={barChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{fontSize: 12}} />
+                <YAxis label={{ value: 'Total Plays', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Bar dataKey="plays" name="Plays" fill="#3b82f6" />
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Student Performance</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Student Performance</CardTitle>
+            <CardDescription>
+              Students who have practiced this game
+            </CardDescription>
+          </div>
+          <Button onClick={exportToCSV} variant="outline" size="sm">
+            <Download className="mr-2 h-4 w-4" />
+            Export
+          </Button>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {students.map(student => (
-              <div key={student.id} className="flex justify-between items-center border-b pb-2">
-                <div>
-                  <div className="font-medium">{student.name}</div>
-                  <div className="text-sm text-muted-foreground">
-                    Last played: {new Date(student.lastPlayed).toLocaleDateString()}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div>Score: {student.bestScore.toFixed(2)}</div>
-                  <div className="text-sm text-muted-foreground">
-                    Plays: {student.plays}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Student Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>Total Score</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {students.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-10">
+                    No students have practiced this game yet
+                  </TableCell>
+                </TableRow>
+              ) : (
+                students.map(student => (
+                  <TableRow key={student.id}>
+                    <TableCell className="font-medium">{student.name}</TableCell>
+                    <TableCell>{student.email}</TableCell>
+                    <TableCell>{student.phone}</TableCell>
+                    <TableCell>{student.totalScore.toFixed(0)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleViewDetailedReport(student.userId)}
+                      >
+                        <Eye className="mr-2 h-4 w-4" />
+                        View Detailed Report
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>

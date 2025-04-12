@@ -27,41 +27,109 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        // Try to fetch user from collections
         try {
-          // First check if user is an admin
-          const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
-          if (adminDoc.exists()) {
-            const adminData = adminDoc.data();
+          // First check the users collection (unified collection)
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            console.log("Found user in users collection:", userData);
+            
+            // If this is a student, ensure we have college ID
+            if (userData.role === 'student') {
+              let collegeId = userData.college || '';
+              
+              // If college ID is missing and student has collegeId
+              if (!collegeId && userData.collegeId) {
+                collegeId = userData.collegeId;
+              }
+              
+              setUser({
+                id: firebaseUser.uid,
+                email: userData.email || firebaseUser.email || '',
+                role: 'student',
+                name: userData.name || '',
+                college: collegeId,
+                branch: userData.branch || '',
+                year: userData.year || ''
+              });
+              
+              // Log for debugging
+              console.log("Setting student user with college:", collegeId);
+              setLoading(false);
+              return;
+            }
+            
+            // If this is a college admin
+            if (userData.role === 'college') {
+              setUser({
+                id: firebaseUser.uid,
+                email: userData.email || firebaseUser.email || '',
+                role: 'college',
+                name: userData.name || '',
+                college: userData.college || ''
+              });
+              setLoading(false);
+              return;
+            }
+            
+            // For admin or other roles
             setUser({
               id: firebaseUser.uid,
-              email: adminData.email || firebaseUser.email || '',
-              role: 'admin',
-              name: adminData.name || '',
+              email: userData.email || firebaseUser.email || '',
+              role: userData.role || 'admin',
+              name: userData.name || ''
             });
             setLoading(false);
             return;
           }
           
-          // Then check if user is a student
+          // Check students collection as fallback
           const studentDoc = await getDoc(doc(db, 'students', firebaseUser.uid));
           if (studentDoc.exists()) {
             const studentData = studentDoc.data();
+            console.log("Found user in students collection:", studentData);
+            
+            let collegeId = studentData.college || '';
+            
+            // If college ID is missing and student has collegeId
+            if (!collegeId && studentData.collegeId) {
+              collegeId = studentData.collegeId;
+            }
+            
             setUser({
               id: firebaseUser.uid,
               email: studentData.email || firebaseUser.email || '',
               role: 'student',
               name: studentData.name || '',
-              college: studentData.college || '',
+              college: collegeId,
               branch: studentData.branch || '',
-              year: studentData.year || '',
+              year: studentData.year || ''
             });
             setLoading(false);
             return;
           }
           
-          // Check if user is a college admin (by adminId)
+          // Check admins collection
+          const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
+          if (adminDoc.exists()) {
+            const adminData = adminDoc.data();
+            console.log("Found user in admins collection:", adminData);
+            
+            setUser({
+              id: firebaseUser.uid,
+              email: adminData.email || firebaseUser.email || '',
+              role: 'admin',
+              name: adminData.name || ''
+            });
+            setLoading(false);
+            return;
+          }
+          
+          // Check for college admin by adminId field
+          // Query colleges collection where adminId matches the user's uid
           const collegeByIdQuery = query(
-            collection(db, 'colleges'), 
+            collection(db, 'colleges'),
             where('adminId', '==', firebaseUser.uid)
           );
           const collegeByIdSnapshot = await getDocs(collegeByIdQuery);
@@ -70,11 +138,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             // College entry found with this user ID as admin
             const collegeDoc = collegeByIdSnapshot.docs[0];
             const collegeData = collegeDoc.data();
+            console.log("Found college with matching adminId:", collegeData);
             
             setUser({
               id: firebaseUser.uid,
               email: collegeData.adminEmail || firebaseUser.email || '',
-              role: 'admin', // Treat college admins as regular admins with limited scope
+              role: 'college', // Use proper college role instead of admin
               name: collegeData.adminName || '',
               college: collegeDoc.id // Store the college ID for reference
             });
@@ -94,11 +163,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               // College entry found with this email as admin
               const collegeDoc = collegeByEmailSnapshot.docs[0];
               const collegeData = collegeDoc.data();
+              console.log("Found college with matching adminEmail:", collegeData);
               
               setUser({
                 id: firebaseUser.uid,
                 email: firebaseUser.email,
-                role: 'admin', // Treat college admins as regular admins with limited scope
+                role: 'college', // Use proper college role instead of admin
                 name: collegeData.adminName || '',
                 college: collegeDoc.id // Store the college ID for reference
               });

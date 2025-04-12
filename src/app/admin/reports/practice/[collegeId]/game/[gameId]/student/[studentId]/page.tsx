@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { use } from 'react'; 
 import { db } from "@/lib/firebase";
 import { 
   collection, 
@@ -45,31 +46,86 @@ import {
   Bar
 } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format } from "date-fns";
+import { format, isValid } from "date-fns";
 
-export default function StudentGameDetailPage({ 
-  params 
-}: { 
-  params: { collegeId: string; gameId: string; studentId: string } 
-}) {
-  const unwrappedParams = use(params);
+interface GameStat {
+  id: string;
+  gameId: string;
+  userId: string;
+  bestScore: number;
+  normalizedBestScore: number;
+  lastScore: number;
+  plays: number;
+  lastPlayed: string;
+  totalDuration: number;
+  scores?: Array<{score: number, timestamp: string}>;
+}
+
+interface StudentDetailPageProps {
+  params: { 
+    collegeId: string; 
+    gameId: string; 
+    studentId: string 
+  };
+}
+
+interface StudentData {
+  id: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  [key: string]: any;
+}
+
+// Helper function to safely format dates
+const safeFormatDate = (dateValue: any, formatString: string = "MMM dd, yyyy") => {
+  if (!dateValue) return "Never";
+  
+  try {
+    // Handle Firestore timestamp objects
+    if (dateValue && typeof dateValue === 'object' && dateValue.toDate && typeof dateValue.toDate === 'function') {
+      const date = dateValue.toDate();
+      return format(date, formatString);
+    }
+    
+    // Handle string/number timestamps
+    const date = new Date(dateValue);
+    if (isValid(date)) {
+      return format(date, formatString);
+    }
+    
+    return "Invalid date";
+  } catch (error) {
+    console.error("Error formatting date:", error);
+    return "Invalid date";
+  }
+};
+
+export default function StudentGameDetailPage({ params }: StudentDetailPageProps) {
+  const router = useRouter();
+  
+  // Unwrap params using React.use() with proper type casting
+  const unwrappedParams = use(params as any) as {collegeId: string; gameId: string; studentId: string};
   const collegeId = unwrappedParams.collegeId;
   const gameId = unwrappedParams.gameId;
   const studentId = unwrappedParams.studentId;
 
-  const [student, setStudent] = useState<any>(null);
+  const [student, setStudent] = useState<StudentData | null>(null);
   const [game, setGame] = useState<any>(null);
-  const [gameStats, setGameStats] = useState<any>(null);
-  const [allGameStats, setAllGameStats] = useState<any[]>([]);
+  const [gameStats, setGameStats] = useState<GameStat | null>(null);
+  const [allGameStats, setAllGameStats] = useState<GameStat[]>([]);
   const [lineChartData, setLineChartData] = useState<any[]>([]);
   const [barChartData, setBarChartData] = useState<any[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<string>(gameId);
   const [loading, setLoading] = useState(true);
-  const router = useRouter();
 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        setLoading(true);
+        
         // Fetch student data
         const studentDoc = await getDoc(doc(db, "students", studentId));
         if (!studentDoc.exists()) {
@@ -79,41 +135,13 @@ export default function StudentGameDetailPage({
         
         const studentData = {
           id: studentDoc.id,
-          ...serializeFirestoreData(studentDoc.data())
+          ...studentDoc.data()
         };
         setStudent(studentData);
         
         // Fetch game data
-        const gameMetadata = getGameById(gameId);
-        const gameDoc = await getDoc(doc(db, "games", gameId));
-        const gameData = gameDoc.exists() 
-          ? {
-              id: gameId,
-              ...serializeFirestoreData(gameDoc.data()),
-              name: gameDoc.data().name || gameMetadata?.name || "Unknown Game"
-            }
-          : {
-              id: gameId,
-              name: gameMetadata?.name || "Unknown Game"
-            };
-        
-        setGame(gameData);
-        
-        // Fetch game stats for this student for this specific game
-        const statsQuery = query(
-          collection(db, "gameStats"),
-          where("gameId", "==", gameId),
-          where("userId", "==", studentId)
-        );
-        
-        const statsSnapshot = await getDocs(statsQuery);
-        if (statsSnapshot.docs.length > 0) {
-          const statsData = {
-            id: statsSnapshot.docs[0].id,
-            ...serializeFirestoreData(statsSnapshot.docs[0].data())
-          };
-          setGameStats(statsData);
-        }
+        const gameInfo = getGameById(gameId);
+        setGame(gameInfo || { id: gameId, name: "Game" });
         
         // Fetch game stats for this student for all games
         const allStatsQuery = query(
@@ -124,32 +152,53 @@ export default function StudentGameDetailPage({
         const allStatsSnapshot = await getDocs(allStatsQuery);
         const allStats = allStatsSnapshot.docs.map(doc => ({
           id: doc.id,
-          ...serializeFirestoreData(doc.data())
-        }));
+          ...doc.data()
+        })) as GameStat[];
         
         setAllGameStats(allStats);
         
-        // Create line chart data (in a real app you would fetch historical scores)
-        // This is a simplified example using random data
-        const mockHistoricalData = Array.from({ length: 10 }, (_, i) => {
-          const date = new Date();
-          date.setDate(date.getDate() - (10 - i));
-          return {
-            date: format(date, "MMM dd"),
-            score: Math.floor(Math.random() * (statsData?.bestScore || 100))
-          };
-        });
+        // Create mock score history data (replace with real data when available)
+        const selectedStats = allStats.find(stat => stat.gameId === gameId);
+        const mockScoreHistory = [];
         
-        if (statsData) {
-          mockHistoricalData.push({
-            date: "Latest",
-            score: statsData.lastScore
-          });
+        if (selectedStats && selectedStats.scores && selectedStats.scores.length > 0) {
+          // Use real score history if available
+          mockScoreHistory.push(...selectedStats.scores.map((score: any) => {
+            let dateStr = "Unknown";
+            try {
+              // Handle both Firestore timestamps and string timestamps
+              if (score.timestamp && typeof score.timestamp === 'object' && score.timestamp.toDate) {
+                dateStr = format(score.timestamp.toDate(), "MMM dd");
+              } else {
+                const date = new Date(score.timestamp);
+                if (isValid(date)) {
+                  dateStr = format(date, "MMM dd");
+                }
+              }
+            } catch (error) {
+              console.error("Error parsing timestamp:", error);
+            }
+            
+            return {
+              date: dateStr,
+              score: score.score
+            };
+          }));
+        } else {
+          // Create mock data as fallback
+          for (let i = 0; i < 10; i++) {
+            const date = new Date();
+            date.setDate(date.getDate() - (10 - i));
+            mockScoreHistory.push({
+              date: format(date, "MMM dd"),
+              score: Math.floor(Math.random() * 100)
+            });
+          }
         }
         
-        setLineChartData(mockHistoricalData);
+        setLineChartData(mockScoreHistory);
         
-        // Create bar chart data for games played by this student
+        // Create bar chart data for games played
         const gamesPlayedData = allStats.map(stat => {
           const gameInfo = getGameById(stat.gameId);
           return {
@@ -157,6 +206,9 @@ export default function StudentGameDetailPage({
             plays: stat.plays || 0
           };
         });
+        
+        // Sort by most played
+        gamesPlayedData.sort((a, b) => b.plays - a.plays);
         
         setBarChartData(gamesPlayedData);
         setLoading(false);
@@ -169,29 +221,82 @@ export default function StudentGameDetailPage({
     fetchData();
   }, [collegeId, gameId, studentId, router]);
 
-  // Handle game selection for line chart
+  // Handle game selection change for line chart
   const handleGameChange = (value: string) => {
     setSelectedGameId(value);
     
     const selectedStats = allGameStats.find(stat => stat.gameId === value);
     if (selectedStats) {
-      // In a real app, you would fetch historical data for the selected game
-      const mockHistoricalData = Array.from({ length: 10 }, (_, i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - (10 - i));
-        return {
-          date: format(date, "MMM dd"),
-          score: Math.floor(Math.random() * (selectedStats.bestScore || 100))
-        };
-      });
-      
-      mockHistoricalData.push({
-        date: "Latest",
-        score: selectedStats.lastScore
-      });
-      
-      setLineChartData(mockHistoricalData);
+      // If we have real score history data, use it
+      if (selectedStats.scores && selectedStats.scores.length > 0) {
+        setLineChartData(selectedStats.scores.map((score: any) => {
+          let dateStr = "Unknown";
+          try {
+            // Handle both Firestore timestamps and string timestamps
+            if (score.timestamp && typeof score.timestamp === 'object' && score.timestamp.toDate) {
+              dateStr = format(score.timestamp.toDate(), "MMM dd");
+            } else {
+              const date = new Date(score.timestamp);
+              if (isValid(date)) {
+                dateStr = format(date, "MMM dd");
+              }
+            }
+          } catch (error) {
+            console.error("Error parsing timestamp:", error);
+          }
+          
+          return {
+            date: dateStr,
+            score: score.score
+          };
+        }));
+      } else {
+        // Otherwise use mock data
+        const mockData = [];
+        for (let i = 0; i < 10; i++) {
+          const date = new Date();
+          date.setDate(date.getDate() - (10 - i));
+          mockData.push({
+            date: format(date, "MMM dd"),
+            score: Math.floor(Math.random() * 100)
+          });
+        }
+        setLineChartData(mockData);
+      }
     }
+  };
+
+  const exportToCSV = () => {
+    const headers = ['Game Name', 'Best Score', 'Last Score', 'Times Played', 'Total Duration (mins)', 'Last Played'];
+    const csvData = allGameStats.map(stat => {
+      const gameInfo = getGameById(stat.gameId);
+      return [
+        gameInfo?.name || "Unknown Game",
+        (stat.bestScore || 0).toString(),
+        (stat.lastScore || 0).toString(),
+        (stat.plays || 0).toString(),
+        (stat.totalDuration || 0).toString(),
+        stat.lastPlayed ? safeFormatDate(stat.lastPlayed) : "Never"
+      ];
+    });
+    
+    const csvContent = [
+      headers.join(','),
+      ...csvData.map(row => row.join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${student?.name || "student"}_game_stats.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const navigateBack = () => {
+    router.push(`/admin/reports/practice/${collegeId}/game/${gameId}`);
   };
 
   if (loading) {
@@ -203,20 +308,14 @@ export default function StudentGameDetailPage({
   }
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => router.push(`/admin/reports/practice/${collegeId}/game/${gameId}`)}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-2xl font-bold">
-            {student?.firstName} {student?.lastName} - Game Practice Report
-          </h1>
-        </div>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="icon" onClick={navigateBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <h1 className="text-2xl font-bold">
+          {student?.name || `${student?.firstName || ''} ${student?.lastName || ''}`} - Game Practice Report
+        </h1>
       </div>
 
       <Card>
@@ -230,11 +329,11 @@ export default function StudentGameDetailPage({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <p className="text-sm font-medium">Name</p>
-              <p>{student?.firstName} {student?.lastName}</p>
+              <p>{student?.name || `${student?.firstName || ''} ${student?.lastName || ''}`}</p>
             </div>
             <div>
               <p className="text-sm font-medium">Email</p>
-              <p>{student?.email}</p>
+              <p>{student?.email || 'N/A'}</p>
             </div>
             <div>
               <p className="text-sm font-medium">Phone</p>
@@ -316,11 +415,17 @@ export default function StudentGameDetailPage({
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Game Stats</CardTitle>
-          <CardDescription>
-            Detailed stats for games played by this student
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Game Stats</CardTitle>
+            <CardDescription>
+              Detailed stats for games played by this student
+            </CardDescription>
+          </div>
+          <Button onClick={exportToCSV} variant="outline" size="sm">
+            <Download className="mr-2 h-4 w-4" />
+            Export
+          </Button>
         </CardHeader>
         <CardContent>
           {allGameStats.length === 0 ? (
@@ -333,9 +438,9 @@ export default function StudentGameDetailPage({
                 <TableRow>
                   <TableHead>Game Name</TableHead>
                   <TableHead>Best Score</TableHead>
-                  <TableHead>Normalized Best Score</TableHead>
                   <TableHead>Last Score</TableHead>
                   <TableHead>Times Played</TableHead>
+                  <TableHead>Total Duration</TableHead>
                   <TableHead>Last Played</TableHead>
                 </TableRow>
               </TableHeader>
@@ -353,13 +458,13 @@ export default function StudentGameDetailPage({
                           {stat.bestScore || 0}
                         </div>
                       </TableCell>
-                      <TableCell>{stat.normalizedBestScore || 0}/100</TableCell>
                       <TableCell>{stat.lastScore || 0}</TableCell>
                       <TableCell>{stat.plays || 0}</TableCell>
+                      <TableCell>{stat.totalDuration || 0} mins</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Clock className="h-4 w-4 text-muted-foreground" />
-                          {stat.lastPlayed ? format(new Date(stat.lastPlayed), "MMM dd, yyyy") : "Never"}
+                          {safeFormatDate(stat.lastPlayed)}
                         </div>
                       </TableCell>
                     </TableRow>

@@ -106,13 +106,6 @@ export function CollegeSidebar({ className }: CollegeSidebarProps) {
                 </div>
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/profile">Profile</Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/college/settings">Settings</Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="cursor-pointer"
                 onSelect={signOutHandler}

@@ -19,12 +19,14 @@ import { toast } from "sonner";
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { serializeFirestoreData } from "@/lib/utils";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 export default function StudentAssessmentsPage() {
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [assessments, setAssessments] = useState<any[]>([]);
   const [filteredAssessments, setFilteredAssessments] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const { user } = useSession();
   const router = useRouter();
 
@@ -34,29 +36,71 @@ export default function StudentAssessmentsPage() {
       if (!user?.id) return;
 
       setIsLoading(true);
+      setError(null);
+      
       try {
-        // Get college of the student
-        const studentRef = collection(db, "students");
-        const studentQuery = query(studentRef, where("id", "==", user.id));
-        const studentSnapshot = await getDocs(studentQuery);
+        console.log("Loading assessments for student:", user.id, user.email);
         
-        if (studentSnapshot.empty) {
-          console.error("Student not found");
-          toast.error("Failed to load student data");
-          setIsLoading(false);
-          return;
+        // Get student data from students collection
+        const studentRef = collection(db, "students");
+        
+        // Try to find student by ID first
+        const studentByIdQuery = query(studentRef, where("id", "==", user.id));
+        const studentByIdSnapshot = await getDocs(studentByIdQuery);
+        
+        let studentData;
+        let studentCollege;
+        
+        if (!studentByIdSnapshot.empty) {
+          // Found student by ID
+          studentData = studentByIdSnapshot.docs[0].data();
+          studentCollege = studentData.collegeId;
+          console.log("Found student by ID, college:", studentCollege);
+        } else if (user.email) {
+          // Try to find student by email
+          const studentByEmailQuery = query(studentRef, where("email", "==", user.email));
+          const studentByEmailSnapshot = await getDocs(studentByEmailQuery);
+          
+          if (!studentByEmailSnapshot.empty) {
+            studentData = studentByEmailSnapshot.docs[0].data();
+            studentCollege = studentData.collegeId;
+            console.log("Found student by email, college:", studentCollege);
+          }
         }
         
-        const studentData = studentSnapshot.docs[0].data();
-        const studentCollege = studentData.college;
+        // If we still couldn't find the student or their college
+        if (!studentCollege) {
+          console.log("No collegeId found for student. Checking with field 'college' as fallback");
+          
+          // Check if using old field name 'college' instead of 'collegeId'
+          if (studentData && studentData.college) {
+            studentCollege = studentData.college;
+            console.log("Found college using legacy field name:", studentCollege);
+          } else {
+            setError("Your account is not linked to any college. Please contact your administrator.");
+            setIsLoading(false);
+            return;
+          }
+        }
         
         // Get assessments assigned to this student's college
+        console.log(`Fetching assessments for college: ${studentCollege}`);
         const assessmentsRef = collection(db, "assessments");
-        const assessmentsQuery = query(
+        const assessmentsByCollegeQuery = query(
           assessmentsRef, 
           where("assignedTo", "array-contains", studentCollege)
         );
-        const assessmentsSnapshot = await getDocs(assessmentsQuery);
+        
+        const assessmentsByCollegeSnapshot = await getDocs(assessmentsByCollegeQuery);
+        console.log(`Found ${assessmentsByCollegeSnapshot.docs.length} assessments for college ${studentCollege}`);
+        
+        if (assessmentsByCollegeSnapshot.empty) {
+          console.log("No assessments found for this college");
+          setAssessments([]);
+          setFilteredAssessments([]);
+          setIsLoading(false);
+          return;
+        }
         
         // Get attempts by this student
         const attemptsRef = collection(db, "assessmentAttempts");
@@ -75,7 +119,7 @@ export default function StudentAssessmentsPage() {
         
         // Process assessments with attempt data
         const now = new Date();
-        const assessmentList = assessmentsSnapshot.docs.map((doc) => {
+        const assessmentList = assessmentsByCollegeSnapshot.docs.map((doc) => {
           const assessment = serializeFirestoreData({ id: doc.id, ...doc.data() });
           const attempt = attemptsByAssessment[assessment.id];
           
@@ -84,7 +128,9 @@ export default function StudentAssessmentsPage() {
           const endDate = new Date(assessment.endDate);
           const hasStarted = now >= startDate;
           const hasEnded = now > endDate;
-          const canTake = hasStarted && !hasEnded && !attempt;
+          const maxAttempts = assessment.maxAttempts || 1;
+          const attemptCount = attempt ? 1 : 0; // Simple for now, can be expanded for multiple attempts
+          const canTake = hasStarted && !hasEnded && attemptCount < maxAttempts;
           
           return {
             ...assessment,
@@ -104,7 +150,7 @@ export default function StudentAssessmentsPage() {
         setFilteredAssessments(assessmentList);
       } catch (error) {
         console.error("Error loading assessments:", error);
-        toast.error("Failed to load assessments");
+        setError("Failed to load assessments. Please try again later.");
       } finally {
         setIsLoading(false);
       }
@@ -160,13 +206,20 @@ export default function StudentAssessmentsPage() {
         </div>
       </div>
 
+      {error && (
+        <Alert variant="destructive" className="my-4">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       {isLoading ? (
         <div className="flex justify-center py-8">
           <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
         </div>
       ) : filteredAssessments.length === 0 ? (
         <div className="bg-background border rounded-lg p-8 text-center">
-          <p className="text-muted-foreground">No Assessments Found</p>
+          <p className="text-muted-foreground">No Assessments Scheduled</p>
         </div>
       ) : (
         <div className="border rounded-lg overflow-hidden">

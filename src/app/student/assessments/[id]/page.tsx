@@ -22,7 +22,10 @@ import {
   collection, 
   addDoc, 
   serverTimestamp,
-  Timestamp
+  Timestamp,
+  query,
+  where,
+  getDocs
 } from "firebase/firestore";
 import { normalizeScore, getGameMaxScore } from "@/lib/utils/score-normalization";
 import {
@@ -55,8 +58,9 @@ const GAME_COMPONENTS: Record<string, any> = {
 };
 
 export default function AssessmentPage({ params }: { params: { id: string } }) {
+  // Unwrap params using React.use()
   const unwrappedParams = use(params);
-  const assessmentId = unwrappedParams.id;
+  const [assessmentId] = useState(() => unwrappedParams.id);
   const [assessment, setAssessment] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [currentStep, setCurrentStep] = useState<number>(0);
@@ -71,10 +75,12 @@ export default function AssessmentPage({ params }: { params: { id: string } }) {
 
   // Load assessment
   useEffect(() => {
+    // Remove direct params.id access here since we now use assessmentId state
     const loadAssessment = async () => {
       if (!user?.id) return;
       
       try {
+        console.log(`Loading assessment: ${assessmentId} for student: ${user.id}`);
         const assessmentDoc = await getDoc(doc(db, "assessments", assessmentId));
         
         if (!assessmentDoc.exists()) {
@@ -105,18 +111,46 @@ export default function AssessmentPage({ params }: { params: { id: string } }) {
           return;
         }
         
-        // Get user's college
-        const studentRef = collection(db, "students");
-        const studentDoc = await getDoc(doc(studentRef, user.id));
+        // Get user's college using multiple methods
+        let studentCollege = null;
         
-        if (!studentDoc.exists()) {
-          setAssessmentError("Student data not found");
+        // Try to find student by ID first in students collection
+        try {
+          const studentRef = collection(db, "students");
+          
+          // Try by ID
+          const studentByIdQuery = query(studentRef, where("id", "==", user.id));
+          const studentByIdSnapshot = await getDocs(studentByIdQuery);
+          
+          if (!studentByIdSnapshot.empty) {
+            const studentData = studentByIdSnapshot.docs[0].data();
+            // Try both collegeId and college fields
+            studentCollege = studentData.collegeId || studentData.college;
+            console.log(`Found student by ID, college: ${studentCollege}`);
+          } 
+          // Try by email if ID search failed
+          else if (user.email) {
+            const studentByEmailQuery = query(studentRef, where("email", "==", user.email));
+            const studentByEmailSnapshot = await getDocs(studentByEmailQuery);
+            
+            if (!studentByEmailSnapshot.empty) {
+              const studentData = studentByEmailSnapshot.docs[0].data();
+              studentCollege = studentData.collegeId || studentData.college;
+              console.log(`Found student by email, college: ${studentCollege}`);
+            }
+          }
+        } catch (error) {
+          console.error("Error finding student college:", error);
+        }
+        
+        // If we couldn't find the student's college
+        if (!studentCollege) {
+          setAssessmentError("Could not find your college information");
           setLoading(false);
           return;
         }
         
-        const studentData = studentDoc.data();
-        const studentCollege = studentData.college;
+        console.log(`Student college: ${studentCollege}, Assessment assigned to:`, assessmentData.assignedTo);
         
         // Check if assessment is assigned to student's college
         if (!assessmentData.assignedTo.includes(studentCollege)) {
@@ -126,13 +160,22 @@ export default function AssessmentPage({ params }: { params: { id: string } }) {
         }
         
         // Check if student has already taken this assessment
-        const attemptsRef = collection(db, "assessmentAttempts");
-        const attemptDoc = await getDoc(doc(attemptsRef, `${user.id}_${assessmentData.id}`));
-        
-        if (attemptDoc.exists()) {
-          setAssessmentError("You have already taken this assessment");
-          setLoading(false);
-          return;
+        try {
+          const attemptsRef = collection(db, "assessmentAttempts");
+          const attemptsQuery = query(
+            attemptsRef, 
+            where("studentId", "==", user.id),
+            where("assessmentId", "==", assessmentData.id)
+          );
+          const attemptSnapshot = await getDocs(attemptsQuery);
+          
+          if (!attemptSnapshot.empty) {
+            setAssessmentError("You have already taken this assessment");
+            setLoading(false);
+            return;
+          }
+        } catch (error) {
+          console.error("Error checking attempts:", error);
         }
         
         setAssessment(assessmentData);
@@ -146,7 +189,7 @@ export default function AssessmentPage({ params }: { params: { id: string } }) {
     };
     
     loadAssessment();
-  }, [assessmentId, user]);
+  }, [assessmentId, user]); // Update dependency array to use assessmentId state
 
   // Timer for the assessment
   useEffect(() => {

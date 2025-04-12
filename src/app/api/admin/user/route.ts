@@ -24,20 +24,12 @@ async function validateAdmin(request: NextRequest) {
       };
     }
     
-    // Check user role in Firestore
-    const userDoc = await adminDb.collection('users').doc(decodedToken.uid).get();
-    if (!userDoc.exists) {
+    // Check admin status directly in admins collection
+    const adminDoc = await adminDb.collection('admins').doc(decodedToken.uid).get();
+    if (!adminDoc.exists) {
       return {
         valid: false,
-        error: 'Unauthorized - User not found'
-      };
-    }
-    
-    const userData = userDoc.data();
-    if (userData?.role !== 'admin') {
-      return {
-        valid: false,
-        error: 'Unauthorized - Insufficient permissions'
+        error: 'Unauthorized - User not found or not an admin'
       };
     }
     
@@ -100,13 +92,7 @@ export async function POST(request: NextRequest) {
     const userId = userRecord.uid;
     const timestamp = new Date().toISOString();
     
-    // Add user to users collection
-    await adminDb.collection('users').doc(userId).set({
-      email: email.toLowerCase(),
-      role,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
+    // User data will be stored directly in role-specific collections
     
     // Add role-specific profile
     if (role === 'student') {
@@ -192,31 +178,49 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get('limit') || '10'), 50); // Cap at 50
     
     if (userId) {
-      // Get a specific user
-      const userDoc = await adminDb.collection('users').doc(userId).get();
+      // Check each collection for the user
+      let userData = null;
+      let userRole: UserRole | null = null;
+      let profileData = {};
       
-      if (!userDoc.exists) {
+      // Try students collection
+      const studentDoc = await adminDb.collection('students').doc(userId).get();
+      if (studentDoc.exists) {
+        userData = studentDoc.data() || {};
+        userRole = 'student';
+        profileData = userData;
+      }
+      
+      // Try admins collection if not found
+      if (!userData) {
+        const adminDoc = await adminDb.collection('admins').doc(userId).get();
+        if (adminDoc.exists) {
+          userData = adminDoc.data() || {};
+          userRole = 'admin';
+          profileData = userData;
+        }
+      }
+      
+      // Try colleges collection if not found
+      if (!userData) {
+        const collegesRef = adminDb.collection('colleges');
+        const collegeQuery = await collegesRef.where('adminId', '==', userId).get();
+        
+        if (!collegeQuery.empty) {
+          const collegeDoc = collegeQuery.docs[0];
+          userData = collegeDoc.data() || {};
+          userRole = 'college';
+          profileData = userData;
+        }
+      }
+      
+      if (!userData) {
         return NextResponse.json(
           { error: 'User not found' },
           { status: 404 }
         );
       }
-      
-      const userData = userDoc.data() || {};
-      const userRole = userData.role as UserRole;
-      
-      let profileData = {};
-      
-      if (userRole === 'student') {
-        const studentDoc = await adminDb.collection('students').doc(userId).get();
-        profileData = studentDoc.exists ? studentDoc.data() || {} : {};
-      } else if (userRole === 'admin') {
-        const adminDoc = await adminDb.collection('admins').doc(userId).get();
-        profileData = adminDoc.exists ? adminDoc.data() || {} : {};
-      } else if (userRole === 'college') {
-        const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
-        profileData = collegeDoc.exists ? collegeDoc.data() || {} : {};
-      }
+      // profileData is already set above, no need to fetch again
       
       return NextResponse.json({
         id: userId,
@@ -224,27 +228,36 @@ export async function GET(request: NextRequest) {
         ...profileData
       });
     } else {
-      // Get paginated list of users
-      let query = adminDb.collection('users');
+      // Get paginated list of users from the appropriate collection
+      let collectionName = 'students'; // Default to students
       
-      // Apply role filter if specified
       if (role) {
-        query = query.where('role', '==', role);
+        // Use the specified role collection
+        if (role === 'admin') {
+          collectionName = 'admins';
+        } else if (role === 'college') {
+          collectionName = 'colleges';
+        }
       }
       
+      // Query the appropriate collection
+      const roleCollection = adminDb.collection(collectionName);
+      
       // Get total count (this is not efficient in Firestore but works for small datasets)
-      const countSnapshot = await query.get();
+      const countSnapshot = await roleCollection.get();
       const totalUsers = countSnapshot.size;
       
       // Apply pagination
       const offset = (page - 1) * limit;
-      const snapshot = await query.orderBy('createdAt', 'desc').limit(limit).offset(offset).get();
+      const snapshot = await roleCollection.orderBy('createdAt', 'desc').limit(limit).offset(offset).get();
       
       const users = [];
       for (const doc of snapshot.docs) {
         users.push({
           id: doc.id,
-          ...doc.data()
+          ...doc.data(),
+          role: collectionName === 'students' ? 'student' : 
+                collectionName === 'admins' ? 'admin' : 'college'
         });
       }
       
@@ -288,18 +301,40 @@ export async function DELETE(request: NextRequest) {
       );
     }
     
-    // Get user data to determine collection to delete from
-    const userDoc = await adminDb.collection('users').doc(userId).get();
+    // Check each collection to find the user
+    let userRole: UserRole | null = null;
     
-    if (!userDoc.exists) {
+    // Check students collection
+    const studentDoc = await adminDb.collection('students').doc(userId).get();
+    if (studentDoc.exists) {
+      userRole = 'student';
+    }
+    
+    // Check admins collection if not found
+    if (!userRole) {
+      const adminDoc = await adminDb.collection('admins').doc(userId).get();
+      if (adminDoc.exists) {
+        userRole = 'admin';
+      }
+    }
+    
+    // Check colleges collection if not found
+    if (!userRole) {
+      const collegesRef = adminDb.collection('colleges');
+      const collegeQuery = await collegesRef.where('adminId', '==', userId).get();
+      
+      if (!collegeQuery.empty) {
+        const collegeDoc = collegeQuery.docs[0];
+        userRole = 'college';
+      }
+    }
+    
+    if (!userRole) {
       return NextResponse.json(
         { error: 'User not found' },
         { status: 404 }
       );
     }
-    
-    const userData = userDoc.data() || {};
-    const userRole = userData.role as UserRole;
     
     // Delete from role-specific collection
     if (userRole === 'student') {
@@ -310,8 +345,7 @@ export async function DELETE(request: NextRequest) {
       await adminDb.collection('colleges').doc(userId).delete();
     }
     
-    // Delete from users collection
-    await adminDb.collection('users').doc(userId).delete();
+    // No need to delete from users collection since we're not using it
     
     // Delete from Firebase Auth
     await adminAuth.deleteUser(userId);

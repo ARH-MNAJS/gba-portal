@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { AuthGuard } from "@/components/auth-guard";
@@ -37,7 +37,8 @@ interface PageProps {
 
 export default function StudentDetailsPage({ params }: PageProps) {
   const router = useRouter();
-  const studentId = params.id;
+  const unwrappedParams = use(params);
+  const studentId = unwrappedParams.id;
   
   const [student, setStudent] = useState<StudentDetails | null>(null);
   const [loading, setLoading] = useState(true);

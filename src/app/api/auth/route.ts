@@ -19,17 +19,39 @@ export async function POST(request: NextRequest) {
       try {
         const userRecord = await adminAuth.getUserByEmail(email);
         
-        // User exists, verify their role
-        const userDoc = await adminDb.collection('users').doc(userRecord.uid).get();
+        // User exists, now fetch from the appropriate collection based on role
+        let userDoc;
+        let userData;
         
-        if (!userDoc.exists) {
+        // If role is specified, check only that collection
+        if (role) {
+          const collectionName = role === 'student' ? 'students' : 'admins';
+          userDoc = await adminDb.collection(collectionName).doc(userRecord.uid).get();
+        } else {
+          // If no role specified, check both collections
+          const studentDoc = await adminDb.collection('students').doc(userRecord.uid).get();
+          const adminDoc = await adminDb.collection('admins').doc(userRecord.uid).get();
+          
+          if (studentDoc.exists) {
+            userDoc = studentDoc;
+            userData = studentDoc.data();
+          } else if (adminDoc.exists) {
+            userDoc = adminDoc;
+            userData = adminDoc.data();
+          }
+        }
+        
+        if (!userDoc?.exists) {
           return NextResponse.json(
             { error: 'User profile not found' },
             { status: 404 }
           );
         }
         
-        const userData = userDoc.data();
+        // If we haven't set userData yet, get it now
+        if (!userData) {
+          userData = userDoc.data();
+        }
         
         // If role is specified and doesn't match, reject
         if (role && userData?.role !== role) {

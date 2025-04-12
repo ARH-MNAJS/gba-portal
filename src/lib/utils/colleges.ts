@@ -23,6 +23,7 @@ export interface College {
   adminEmail?: string;
   adminPhone?: string;
   adminId?: string;
+  collegeId?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -34,81 +35,35 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 /**
  * Get a college by ID from Firestore
  */
-export async function getCollegeById(collegeId: string): Promise<College> {
-  // Validate collegeId
-  if (!collegeId) {
-    throw new Error("College ID is required");
+export async function getCollegeById(collegeId: string): Promise<College | null> {
+  if (!collegeId || collegeId.trim() === '') {
+    throw new Error('College ID is required and cannot be empty');
   }
-  
-  console.log(`[getCollegeById] Getting college with ID: ${collegeId}`);
-  
-  // Check cache first
-  const cachedCollege = collegesCache[collegeId];
-  const now = Date.now();
-  
-  if (cachedCollege && now - cachedCollege.timestamp < CACHE_DURATION) {
-    console.log(`[getCollegeById] Returning cached college: ${collegeId}`);
-    return cachedCollege.data;
+
+  // Check if college exists in cache
+  if (collegesCache[collegeId]) {
+    return collegesCache[collegeId].data;
   }
+
+  // Get college from Firestore
+  const collegeDoc = await getDoc(doc(db, 'colleges', collegeId));
   
-  // Fetch from Firestore if not in cache or cache expired
-  try {
-    console.log(`[getCollegeById] Fetching from Firestore: ${collegeId}`);
-    const collegeDoc = await getDoc(doc(db, "colleges", collegeId));
-    
-    if (collegeDoc.exists()) {
-      const collegeData = collegeDoc.data() as College;
-      
-      // Update cache
-      collegesCache[collegeId] = {
-        data: { id: collegeId, ...collegeData },
-        timestamp: now,
-      };
-      
-      return { id: collegeId, ...collegeData };
-    }
-    
-    // If document doesn't exist directly, try to find by query
-    console.log(`[getCollegeById] College not found directly, trying query lookup`);
-    
-    // First try to query by field matching the ID
-    const matchingQuery = query(
-      collection(db, "colleges"), 
-      where("collegeId", "==", collegeId)
-    );
-    let querySnapshot = await getDocs(matchingQuery);
-    
-    // If not found, try other ways to find it
-    if (querySnapshot.empty) {
-      // Try using the ID as a numeric field value
-      const numericIdQuery = query(
-        collection(db, "colleges"), 
-        where("collegeId", "==", Number(collegeId))
-      );
-      querySnapshot = await getDocs(numericIdQuery);
-      
-      // If still not found, try looking for any field matching this ID
-      if (querySnapshot.empty) {
-        console.log(`[getCollegeById] No matching college found in queries`);
-        throw new Error(`College with ID ${collegeId} not found`);
-      }
-    }
-    
-    // Found through query
-    const foundDoc = querySnapshot.docs[0];
-    const collegeData = foundDoc.data() as College;
-    
-    // Update cache with the found college
-    collegesCache[collegeId] = {
-      data: { id: foundDoc.id, ...collegeData },
-      timestamp: now,
-    };
-    
-    return { id: foundDoc.id, ...collegeData };
-  } catch (error) {
-    console.error(`[getCollegeById] Error fetching college:`, error);
-    throw new Error(`College with ID ${collegeId} not found`);
+  if (!collegeDoc.exists()) {
+    return null;
   }
+
+  const college = {
+    id: collegeDoc.id,
+    ...collegeDoc.data(),
+  } as College;
+
+  // Cache college
+  collegesCache[collegeId] = {
+    data: college,
+    timestamp: Date.now(),
+  };
+
+  return college;
 }
 
 /**
@@ -160,12 +115,13 @@ export const getAllColleges = cache(async (): Promise<College[]> => {
  */
 export async function getCollegeByAdminId(adminId: string): Promise<College | null> {
   try {
-    // Query colleges where adminId matches
+    // Query colleges where adminId field matches
     const collegesRef = collection(db, "colleges");
     const q = query(collegesRef, where("adminId", "==", adminId));
     const querySnapshot = await getDocs(q);
     
     if (querySnapshot.empty) {
+      console.log(`No college found with adminId: ${adminId}`);
       return null;
     }
     
@@ -226,11 +182,19 @@ export async function createCollege(
   // Use provided ID or generate one from name
   const id = collegeId || collegeData.name.toLowerCase().replace(/\s+/g, "-");
   
-  await setDoc(doc(db, "colleges", id), {
+  // Make sure collegeId is explicitly set in the document data
+  const dataToSave = {
     ...collegeData,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
+  
+  // Ensure collegeId is set if it wasn't provided in collegeData
+  if (!dataToSave.collegeId) {
+    dataToSave.collegeId = id;
+  }
+  
+  await setDoc(doc(db, "colleges", id), dataToSave);
   
   // Clear the cache
   collegesCache = {};

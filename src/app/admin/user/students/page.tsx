@@ -30,11 +30,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Eye, Trash2, UserPlus, Upload } from "lucide-react";
-import { fetchUsers, deleteUser } from "@/lib/actions/user-actions";
+import { Eye, Trash2, UserPlus } from "lucide-react";
+import { fetchUsers } from "@/lib/actions/user-actions";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getCollegeById, getCollegeNameById } from "@/lib/utils/colleges";
-
+import { db } from "@/lib/firebase";
+import { doc, deleteDoc, getDoc, collection, getDocs, setDoc } from "firebase/firestore";
 
 interface User {
   id: string;
@@ -81,30 +81,88 @@ export default function AdminStudentsPage() {
     }
   }, [searchTerm, users]);
 
+  // Initialize the colleges collection with basic data if needed
+  useEffect(() => {
+    const initCollegesIfNeeded = async () => {
+      try {
+        // Check if colleges collection has any documents
+        const collegesSnapshot = await getDocs(collection(db, 'colleges'));
+        if (collegesSnapshot.empty) {
+          console.log('Colleges collection is empty, initializing with default data');
+          
+          // Add a default college entry for any existing students
+          await setDoc(doc(db, 'colleges', 'default'), {
+            name: 'Default College',
+            branches: ['General', 'Computer Science', 'Electrical Engineering', 'Mechanical Engineering'],
+            years: ['1', '2', '3', '4'],
+            createdAt: new Date(),
+          });
+          console.log('Created default college entry');
+        } else {
+          console.log(`Found ${collegesSnapshot.size} colleges in database`);
+        }
+      } catch (error) {
+        console.error('Error checking/initializing colleges collection:', error);
+      }
+    };
+    
+    initCollegesIfNeeded();
+  }, []);
+
   // Fetch college names when users are loaded
   useEffect(() => {
     if (users.length === 0) return;
 
     const fetchCollegeNames = async () => {
-      const collegeIds = users
-        .map(user => user.college)
-        .filter((id): id is string => !!id);
+      console.log('===== DEBUGGING COLLEGE NAMES =====');
+      console.log('Users with college IDs:', users.map(u => ({ id: u.id, name: u.name, college: u.college })));
 
-      const uniqueCollegeIds = [...new Set(collegeIds)];
       const collegeNamesMap: Record<string, string> = {};
 
-      await Promise.all(
-        uniqueCollegeIds.map(async (collegeId) => {
-          try {
-            collegeNamesMap[collegeId] = await getCollegeNameById(collegeId);
-          } catch (error) {
-            console.error(`Error fetching college name for ${collegeId}:`, error);
-            collegeNamesMap[collegeId] = collegeId; // Fallback to ID
-          }
-        })
-      );
+      // Fetch all college documents into a map for quick lookup
+      try {
+        const collegesRef = collection(db, 'colleges');
+        const collegesSnapshot = await getDocs(collegesRef);
+        const collegesMap = new Map();
 
-      setCollegeNames(collegeNamesMap);
+        // Create a map of collegeId to college name
+        collegesSnapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.collegeId) {
+            collegesMap.set(data.collegeId, data.name);
+          }
+        });
+
+        console.log('Colleges map:', Object.fromEntries(collegesMap));
+
+        // For each user, fetch their corresponding student record to get collegeId
+        await Promise.all(users.map(async (user) => {
+          try {
+            // Get the student document directly
+            const studentDoc = await getDoc(doc(db, 'students', user.id));
+            if (studentDoc.exists()) {
+              const studentData = studentDoc.data();
+              const collegeId = studentData.collegeId || studentData.college;
+              console.log(`Student ${user.id} college ID:`, collegeId);
+              
+              // Look up the college name in the map
+              if (collegeId && collegesMap.has(collegeId)) {
+                collegeNamesMap[user.id] = collegesMap.get(collegeId);
+              } else {
+                collegeNamesMap[user.id] = 'Unknown College';
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching student data for ${user.id}:`, error);
+            collegeNamesMap[user.id] = 'Error Loading';
+          }
+        }));
+
+        console.log('Final college names map:', collegeNamesMap);
+        setCollegeNames(collegeNamesMap);
+      } catch (error) {
+        console.error('Error fetching colleges:', error);
+      }
     };
 
     fetchCollegeNames();
@@ -115,7 +173,6 @@ export default function AdminStudentsPage() {
       setLoading(true);
       console.log('AdminStudentsPage: Loading students, page:', currentPage);
       
-      // Call the server action to fetch users with role filter
       const result = await fetchUsers(currentPage, usersPerPage, "student");
       console.log('AdminStudentsPage: Student data loaded:', result);
       
@@ -153,11 +210,19 @@ export default function AdminStudentsPage() {
     if (!userToDelete) return;
     
     try {
-      // Call the server action to delete the user
-      await deleteUser(userToDelete.id);
+      // Delete from students collection with better error handling
+      const studentRef = doc(db, 'students', userToDelete.id);
+      const studentDoc = await getDoc(studentRef);
+      
+      if (!studentDoc.exists()) {
+        throw new Error('Student record not found');
+      }
+      
+      await deleteDoc(studentRef);
       
       // Update UI
       setUsers(users.filter(user => user.id !== userToDelete.id));
+      setFilteredUsers(filteredUsers.filter(user => user.id !== userToDelete.id));
       toast.success("Student deleted successfully");
     } catch (error: any) {
       console.error("Error deleting student:", error);
@@ -221,7 +286,7 @@ export default function AdminStudentsPage() {
     if (startPage > 2) {
       items.push(
         <PaginationItem key="start-ellipsis">
-          <span className="px-4">...</span>
+          <PaginationLink disabled>...</PaginationLink>
         </PaginationItem>
       );
     }
@@ -244,7 +309,7 @@ export default function AdminStudentsPage() {
     if (endPage < totalPages - 1) {
       items.push(
         <PaginationItem key="end-ellipsis">
-          <span className="px-4">...</span>
+          <PaginationLink disabled>...</PaginationLink>
         </PaginationItem>
       );
     }
@@ -269,15 +334,9 @@ export default function AdminStudentsPage() {
       <div className="container mx-auto py-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
           <h1 className="text-2xl font-bold mb-2 md:mb-0">Student Management</h1>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button 
-              className="flex items-center gap-1 cursor-pointer"
-              onClick={() => router.push("/admin/user/import")}
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>Add Student</span>
-            </Button>
-          </div>
+          <Button onClick={() => router.push('/admin/user/students/import-students')} className="ml-auto">
+            <UserPlus className="mr-2 h-4 w-4" /> Add Student
+          </Button>
         </div>
 
         <div className="mb-6">
@@ -325,31 +384,37 @@ export default function AdminStudentsPage() {
                     <TableCell>{user.email}</TableCell>
                     <TableCell>{user.phone || "N/A"}</TableCell>
                     <TableCell>
-                      {user.college ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="max-w-[200px] inline-block truncate">
+                              {collegeNames[user.id] || 'N/A'}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{collegeNames[user.id] || 'N/A'}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end space-x-1">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="max-w-[200px] inline-block truncate">
-                                {collegeNames[user.college] || user.college}
-                              </span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => router.push(`/admin/user/students/${user.id}`)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>{collegeNames[user.college] || user.college}</p>
+                              <p>View student details</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
-                      ) : "N/A"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => router.push(`/admin/user/${user.id}`)}
-                          title="View Details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -379,6 +444,7 @@ export default function AdminStudentsPage() {
                       if (currentPage > 1) handlePageChange(currentPage - 1);
                     }}
                     className={currentPage <= 1 ? "pointer-events-none opacity-50" : ""}
+                    aria-disabled={currentPage <= 1}
                   />
                 </PaginationItem>
                 
@@ -392,6 +458,7 @@ export default function AdminStudentsPage() {
                       if (currentPage < totalPages) handlePageChange(currentPage + 1);
                     }}
                     className={currentPage >= totalPages ? "pointer-events-none opacity-50" : ""}
+                    aria-disabled={currentPage >= totalPages}
                   />
                 </PaginationItem>
               </PaginationContent>
@@ -420,4 +487,4 @@ export default function AdminStudentsPage() {
       </div>
     </AuthGuard>
   );
-} 
+}

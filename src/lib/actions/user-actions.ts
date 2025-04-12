@@ -16,14 +16,17 @@ export async function fetchUsers(page: number = 1, perPage: number = 10, role?: 
     page = Math.max(1, page);
     perPage = Math.min(Math.max(1, perPage), 100); // Limit to reasonable range
     
-    // Directly query the role-specific collection instead of the users collection
-    let collectionName = 'users';
+    // Directly query the role-specific collection
+    let collectionName;
     if (role === 'student') {
       collectionName = 'students';
     } else if (role === 'admin') {
       collectionName = 'admins';
     } else if (role === 'college') {
       collectionName = 'colleges';
+    } else {
+      // Default to students if no role specified
+      collectionName = 'students';
     }
     
     console.log(`[fetchUsers] Querying collection: ${collectionName}`);
@@ -108,65 +111,78 @@ export async function fetchUsers(page: number = 1, perPage: number = 10, role?: 
  */
 export async function fetchUserById(userId: string) {
   try {
-    // Get user data from users collection
-    const userDoc = await adminDb.collection('users').doc(userId).get();
-    
-    if (!userDoc.exists) {
-      throw new Error('User not found');
-    }
-    
-    const userData = serializeFirestoreData(userDoc.data() || {});
+    // Try to find the user in each collection to determine their role
     let detailedUser = {
       id: userId,
-      email: userData.email || '',
-      role: userData.role as UserRole,
+      email: '',
+      role: 'unknown' as UserRole,
       name: '',
       phone: '',
       college: '',
       branch: '',
       year: '',
-      createdAt: userData.createdAt || '',
-      updatedAt: userData.updatedAt || '',
+      createdAt: '',
+      updatedAt: '',
     };
     
-    // Get role-specific data
-    if (userData.role === 'student') {
-      const studentDoc = await adminDb.collection('students').doc(userId).get();
-      if (studentDoc.exists) {
-        const studentData = serializeFirestoreData(studentDoc.data() || {});
-        detailedUser = {
-          ...detailedUser,
-          name: studentData.name || '',
-          phone: studentData.phone || '',
-          college: studentData.college || '',
-          branch: studentData.branch || '',
-          year: studentData.year || '',
-        };
-      }
-    } else if (userData.role === 'admin') {
-      const adminDoc = await adminDb.collection('admins').doc(userId).get();
-      if (adminDoc.exists) {
-        const adminData = serializeFirestoreData(adminDoc.data() || {});
-        detailedUser = {
-          ...detailedUser,
-          name: adminData.name || '',
-          phone: adminData.phone || '',
-        };
-      }
-    } else if (userData.role === 'college') {
-      const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
-      if (collegeDoc.exists) {
-        const collegeData = serializeFirestoreData(collegeDoc.data() || {});
-        detailedUser = {
-          ...detailedUser,
-          name: collegeData.name || '',
-          phone: collegeData.phone || '',
-          college: collegeData.college || '',
-        };
-      }
+    // First check students collection
+    const studentDoc = await adminDb.collection('students').doc(userId).get();
+    if (studentDoc.exists) {
+      const studentData = serializeFirestoreData(studentDoc.data() || {});
+      detailedUser = {
+        ...detailedUser,
+        email: studentData.email || '',
+        role: 'student',
+        name: studentData.name || '',
+        phone: studentData.phone || '',
+        college: studentData.college || '',
+        branch: studentData.branch || '',
+        year: studentData.year || '',
+        createdAt: studentData.createdAt || '',
+        updatedAt: studentData.updatedAt || '',
+      };
+      return detailedUser;
     }
     
-    return detailedUser;
+    // Check admins collection
+    const adminDoc = await adminDb.collection('admins').doc(userId).get();
+    if (adminDoc.exists) {
+      const adminData = serializeFirestoreData(adminDoc.data() || {});
+      detailedUser = {
+        ...detailedUser,
+        email: adminData.email || '',
+        role: 'admin',
+        name: adminData.name || '',
+        phone: adminData.phone || '',
+        createdAt: adminData.createdAt || '',
+        updatedAt: adminData.updatedAt || '',
+      };
+      return detailedUser;
+    }
+    
+    // Check for college admin by querying adminId field
+    const collegesRef = adminDb.collection('colleges');
+    const collegeQuery = await collegesRef.where('adminId', '==', userId).get();
+    
+    if (!collegeQuery.empty) {
+      const collegeDoc = collegeQuery.docs[0];
+      const collegeData = serializeFirestoreData(collegeDoc.data() || {});
+      detailedUser = {
+        ...detailedUser,
+        email: collegeData.adminEmail || '',
+        role: 'college',
+        name: collegeData.adminName || '',
+        phone: collegeData.adminPhone || '',
+        college: collegeDoc.id || collegeData.collegeId || '',
+        createdAt: collegeData.createdAt || '',
+        updatedAt: collegeData.updatedAt || '',
+      };
+      return detailedUser;
+    }
+    
+    // If we get here, the user wasn't found in any collection
+    throw new Error('User not found in any collection');
+    
   } catch (error: any) {
     console.error('Error fetching user details:', error);
     throw new Error(error.message || 'Failed to fetch user details');
@@ -178,34 +194,46 @@ export async function fetchUserById(userId: string) {
  */
 export async function deleteUser(userId: string) {
   try {
-    // Get user data to determine role
-    const userDoc = await adminDb.collection('users').doc(userId).get();
+    // Try to find and delete user from each collection
+    let found = false;
     
-    if (!userDoc.exists) {
-      throw new Error('User not found');
-    }
-    
-    const userData = userDoc.data() || {};
-    
-    // Delete from role-specific collection
-    if (userData.role === 'student') {
+    // Try deleting from students collection
+    const studentDoc = await adminDb.collection('students').doc(userId).get();
+    if (studentDoc.exists) {
       await adminDb.collection('students').doc(userId).delete();
-    } else if (userData.role === 'admin') {
-      await adminDb.collection('admins').doc(userId).delete();
-    } else if (userData.role === 'college') {
-      await adminDb.collection('colleges').doc(userId).delete();
+      found = true;
+      console.log(`Deleted student with ID ${userId}`);
     }
     
-    // Delete from users collection
-    await adminDb.collection('users').doc(userId).delete();
+    // Try deleting from admins collection
+    const adminDoc = await adminDb.collection('admins').doc(userId).get();
+    if (adminDoc.exists) {
+      await adminDb.collection('admins').doc(userId).delete();
+      found = true;
+      console.log(`Deleted admin with ID ${userId}`);
+    }
+    
+    // Try deleting from colleges collection
+    const collegeDoc = await adminDb.collection('colleges').doc(userId).get();
+    if (collegeDoc.exists) {
+      await adminDb.collection('colleges').doc(userId).delete();
+      found = true;
+      console.log(`Deleted college with ID ${userId}`);
+    }
+    
+    if (!found) {
+      throw new Error('User not found in any collection');
+    }
     
     // Delete from Firebase Authentication
     await adminAuth.deleteUser(userId);
     
-    // Revalidate users page
-    revalidatePath('/admin/users');
+    // Revalidate relevant pages
+    revalidatePath('/admin/user/students');
+    revalidatePath('/admin/user/admin');
+    revalidatePath('/admin/user/college');
     
-    return { success: true, message: 'User deleted successfully' };
+    return { success: true };
   } catch (error: any) {
     console.error('Error deleting user:', error);
     throw new Error(error.message || 'Failed to delete user');
@@ -249,15 +277,7 @@ export async function createUser(userData: CreateUserData) {
     const userId = userRecord.uid;
     const timestamp = new Date().toISOString();
     
-    // Add to users collection
-    await adminDb.collection('users').doc(userId).set({
-      email: userData.email.toLowerCase(),
-      role: userData.role,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-    
-    // Add role-specific data
+    // Add to role-specific collection only
     if (userData.role === 'student') {
       await adminDb.collection('students').doc(userId).set({
         name: userData.name,
@@ -277,19 +297,18 @@ export async function createUser(userData: CreateUserData) {
         createdAt: timestamp,
         updatedAt: timestamp
       });
-    } else if (userData.role === 'college') {
-      await adminDb.collection('colleges').doc(userId).set({
-        name: userData.name,
-        email: userData.email.toLowerCase(),
-        phone: userData.phone || '',
-        college: userData.college || '',
-        createdAt: timestamp,
-        updatedAt: timestamp
-      });
-    }
+    } 
+    // For college role, we don't create a document here
+    // College documents are created by the createCollege function
     
-    // Revalidate users page
-    revalidatePath('/admin/users');
+    // Revalidate relevant pages
+    if (userData.role === 'student') {
+      revalidatePath('/admin/user/students');
+    } else if (userData.role === 'admin') {
+      revalidatePath('/admin/user/admin');
+    } else if (userData.role === 'college') {
+      revalidatePath('/admin/user/college');
+    }
     
     return { success: true, userId };
   } catch (error: any) {
@@ -344,8 +363,8 @@ export async function bulkImportUsers(
     }
   }
   
-  // Revalidate users page
-  revalidatePath('/admin/users');
+  // Revalidate students page
+  revalidatePath('/admin/user/students');
   
   return result;
-} 
+}

@@ -29,6 +29,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 export default function StudentPracticePage() {
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -36,23 +38,56 @@ export default function StudentPracticePage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [games, setGames] = useState<GameWithMetadata[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string>("");
   const router = useRouter();
   const { user } = useSession();
 
   // Load assigned games
   useEffect(() => {
     const loadAssignedGames = async () => {
-      if (!user || !user.college) {
-        console.log("No user or college ID found:", user);
-        setIsLoading(false);
-        return;
-      }
-
-      console.log("Loading games for college:", user.college);
       setIsLoading(true);
+      setErrorMessage("");
+      
       try {
+        if (!user) {
+          console.log("No user found in session");
+          setErrorMessage("Please log in to view practice games");
+          setIsLoading(false);
+          return;
+        }
+
+        console.log("Current user:", user);
+        
+        // Step 1: Check if user has college ID
+        let collegeId = user.college;
+        
+        if (!collegeId || collegeId === "") {
+          console.log("User has no college ID, fetching from user document");
+          
+          // Try to fetch collegeId from the user document directly
+          if (user.id) {
+            const userRef = doc(db, 'users', user.id);
+            const userDoc = await getDoc(userRef);
+            
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              collegeId = userData.college || userData.collegeId;
+              console.log("Found college ID from user document:", collegeId);
+            }
+          }
+        }
+        
+        if (!collegeId || collegeId === "") {
+          console.log("Could not find valid college ID for user");
+          setErrorMessage("Your account is not linked to a college. Please contact your administrator.");
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log("Loading games for college:", collegeId);
+        
         // Get assignments for the student's college
-        const assignments = await getCollegeGameAssignments(user.college);
+        const assignments = await getCollegeGameAssignments(collegeId);
         console.log("Assignments found:", assignments);
         
         const assignedGames: GameWithMetadata[] = [];
@@ -106,6 +141,7 @@ export default function StudentPracticePage() {
         setCategories(Array.from(categorySet));
       } catch (error) {
         console.error("Error loading assigned games:", error);
+        setErrorMessage("Failed to load assigned games. Please try again later.");
         toast.error("Failed to load assigned games");
       } finally {
         setIsLoading(false);
@@ -123,9 +159,10 @@ export default function StudentPracticePage() {
 
   // Filter games based on search and category
   const filteredGames = games.filter(game => {
-    const matchesSearch = game.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         game.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         game.categoryName.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = 
+      game.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (game.description?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (game.categoryName?.toLowerCase() || '').includes(searchTerm.toLowerCase());
     
     const matchesCategory = categoryFilter === "all" || game.categoryId === categoryFilter;
     
@@ -138,59 +175,69 @@ export default function StudentPracticePage() {
         <h1 className="text-3xl font-bold">Practice</h1>
       </div>
       
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
-        <div className="relative w-full sm:w-auto">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search games..."
-            className="pl-8 w-full sm:w-[300px]"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      {errorMessage ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <div className="bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 p-4 rounded-md mb-6 max-w-md mx-auto">
+            <p className="font-medium">{errorMessage}</p>
+          </div>
         </div>
-        
-        {categories.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline">
-                <Filter className="h-4 w-4 mr-2" />
-                Filter
-                {categoryFilter !== "all" && (
-                  <Badge variant="secondary" className="ml-2">1</Badge>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>Filter by Category</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup 
-                value={categoryFilter} 
-                onValueChange={setCategoryFilter}
-              >
-                <DropdownMenuRadioItem value="all">All Categories</DropdownMenuRadioItem>
-                {categories.map((category) => (
-                  <DropdownMenuRadioItem key={category} value={category}>
-                    {getCategoryName(category)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
-      
-      <GameGrid
-        games={filteredGames}
-        isLoading={isLoading}
-        actionLabel="Practice"
-        emptyMessage={
-          searchTerm || categoryFilter !== "all"
-            ? "No games match your search criteria"
-            : "No games have been assigned to your college yet"
-        }
-        onGameAction={(game) => router.push(`/student/practice/game/${game.id}`)}
-      />
+      ) : (
+        <>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
+            <div className="relative w-full sm:w-auto">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search games..."
+                className="pl-8 w-full sm:w-[300px]"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            
+            {categories.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <Filter className="h-4 w-4 mr-2" />
+                    Filter
+                    {categoryFilter !== "all" && (
+                      <Badge variant="secondary" className="ml-2">1</Badge>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Filter by Category</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuRadioGroup 
+                    value={categoryFilter} 
+                    onValueChange={setCategoryFilter}
+                  >
+                    <DropdownMenuRadioItem value="all">All Categories</DropdownMenuRadioItem>
+                    {categories.map((category) => (
+                      <DropdownMenuRadioItem key={category} value={category}>
+                        {getCategoryName(category)}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+          
+          <GameGrid
+            games={filteredGames}
+            isLoading={isLoading}
+            actionLabel="Practice"
+            emptyMessage={
+              searchTerm || categoryFilter !== "all"
+                ? "No games match your search criteria"
+                : "No games have been assigned to your college yet"
+            }
+            onGameAction={(game) => router.push(`/student/practice/game/${game.id}`)}
+          />
+        </>
+      )}
     </div>
   );
 } 

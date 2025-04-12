@@ -26,7 +26,7 @@ import { getAllColleges, type College } from "@/lib/utils/colleges";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { db } from "@/lib/firebase";
-import { doc, deleteDoc } from "firebase/firestore";
+import { doc, deleteDoc, collection, query, where, getDocs } from "firebase/firestore";
 import {
   Table,
   TableBody,
@@ -46,8 +46,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { deleteUser as deleteFirebaseUser } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { deleteUser } from "@/lib/actions/user-actions";
 
 export default function CollegeUsersPage() {
   const [colleges, setColleges] = useState<College[]>([]);
@@ -91,27 +90,55 @@ export default function CollegeUsersPage() {
   }, [searchTerm, colleges]);
 
   const handleViewCollege = (collegeId: string) => {
-    router.push(`/admin/reports/practice/${collegeId}`);
+    router.push(`/admin/user/college/${collegeId}`);
   };
   
   const handleDeleteCollege = async (collegeId: string, adminId?: string) => {
     setDeleting(collegeId);
     try {
-      // Delete college from colleges collection
-      await deleteDoc(doc(db, "colleges", collegeId));
+      // Check if there are any students associated with this college
+      // We need to check multiple possible field names since students might reference 
+      // colleges in different ways
+      const studentsRef = collection(db, "students");
       
-      // If adminId exists, try to delete from Firebase Auth
+      // Check for field 'college'
+      const q1 = query(studentsRef, where("college", "==", collegeId));
+      const snapshot1 = await getDocs(q1);
+      
+      // Check for field 'collegeId'
+      const q2 = query(studentsRef, where("collegeId", "==", collegeId));
+      const snapshot2 = await getDocs(q2);
+      
+      const totalStudents = snapshot1.size + snapshot2.size;
+      
+      if (totalStudents > 0) {
+        toast.error(
+          `Cannot delete college: ${totalStudents} student(s) are still associated with this college. 
+          Please delete or reassign all students first, then try again.`, 
+          { duration: 5000 }
+        );
+        setDeleting(null);
+        return;
+      }
+      
+      // Use the server action to delete both the college document and the associated admin user
       if (adminId) {
         try {
-          // Get a reference to the user via admin SDK
-          // This might not work in the client side - requires Firebase Admin SDK
-          // We're keeping this as a placeholder for server-side implementation
-          console.log("Admin user ID exists, but client-side deletion is not supported");
-          // The deleteUser function from client SDK requires a User object, not just an ID
-          // This would need to be handled via a server action or API endpoint
-        } catch (authError) {
-          console.error("Error deleting admin user from Firebase Auth:", authError);
+          // This will delete both the Firestore document and the Firebase Auth user
+          await deleteUser(adminId);
+          console.log(`Admin user with ID ${adminId} deleted via server action`);
+        } catch (adminDeleteError) {
+          console.error("Error deleting admin user:", adminDeleteError);
+          // Continue with college deletion even if admin deletion fails
         }
+      }
+      
+      // Delete college from colleges collection if not deleted by the server action
+      try {
+        await deleteDoc(doc(db, "colleges", collegeId));
+      } catch (collegeDeleteError) {
+        // This might fail if the college was already deleted by the server action
+        console.log("College may have been deleted by server action already");
       }
       
       // Update local state

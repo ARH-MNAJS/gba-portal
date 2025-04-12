@@ -72,16 +72,23 @@ export default function CollegeStudentsPage() {
     const getCollegeId = async () => {
       if (sessionLoading) return;
       
+      // Add check for user existence to prevent error on sign out
+      if (!user) {
+        // User is not logged in or has signed out
+        setLoading(false);
+        return;
+      }
+      
       try {
         // If user is a college admin, get their college ID
-        if (user?.role === 'college' && user?.college) {
+        if (user.role === 'college' && user.college) {
           setCollegeId(user.college);
           return;
         }
         
         // If the user ID itself is a college ID, use it directly
         try {
-          const college = await getCollegeById(user?.id || '');
+          const college = await getCollegeById(user.id || '');
           if (college) {
             setCollegeId(college.id);
             return;
@@ -91,7 +98,7 @@ export default function CollegeStudentsPage() {
         }
         
         // Try to get college by admin ID
-        if (user?.id) {
+        if (user.id) {
           const college = await getCollegeByAdminId(user.id);
           if (college) {
             setCollegeId(college.id);
@@ -149,8 +156,8 @@ export default function CollegeStudentsPage() {
         return (
           student.name?.toLowerCase().includes(lowercasedFilter) ||
           student.email.toLowerCase().includes(lowercasedFilter) ||
-          student.branch.toLowerCase().includes(lowercasedFilter) ||
-          student.year.toLowerCase().includes(lowercasedFilter)
+          student.branch?.toLowerCase().includes(lowercasedFilter) ||
+          student.year?.toLowerCase().includes(lowercasedFilter)
         );
       });
     }
@@ -192,15 +199,114 @@ export default function CollegeStudentsPage() {
       console.log("College ID to filter with:", collegeId);
       console.log("Total students fetched:", result.users.length);
       
-      // Filter students to only include those from the college user's institution
+      // Improve how we filter students to handle different formats of college IDs
       const collegeStudents = result.users.filter((student: any) => {
-        const match = student.college === collegeId || student.college == collegeId;
-        console.log(`Student ${student.email}: college=${student.college}, collegeId=${collegeId}, match=${match}`);
-        return match;
+        // Handle null/undefined college values
+        if (!student.college) return false;
+        
+        // Convert both to strings and trim for more reliable comparison
+        const studentCollege = String(student.college || '').trim().toLowerCase();
+        const currentCollegeId = String(collegeId).trim().toLowerCase();
+        
+        // Check for exact match or if either contains the other
+        // This handles cases where the ID might be stored in different formats
+        const isMatch = 
+          studentCollege === currentCollegeId || 
+          studentCollege.includes(currentCollegeId) || 
+          currentCollegeId.includes(studentCollege);
+        
+        console.log(`Student ${student.email}: college=${studentCollege}, collegeId=${currentCollegeId}, match=${isMatch}`);
+        
+        return isMatch;
       });
       
       console.log("Filtered college students count:", collegeStudents.length);
       
+      if (collegeStudents.length === 0) {
+        console.log("No students found with primary method, trying direct Firestore query");
+        
+        // If no students found, try querying directly from Firestore
+        try {
+          const studentsRef = collection(db, 'students');
+          const q = query(studentsRef, where('college', '==', collegeId));
+          const querySnapshot = await getDocs(q);
+          
+          const firestoreStudents = querySnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              name: data.name || '',
+              email: data.email || '',
+              branch: data.branch || '',
+              year: data.year || '',
+              createdAt: data.createdAt || '',
+            };
+          });
+          
+          console.log("Students found via direct Firestore query:", firestoreStudents.length);
+          
+          // If still no students, try a more general query to get all students
+          if (firestoreStudents.length === 0) {
+            console.log("No students found with exact match, getting all students to filter manually");
+            
+            // Get all students and filter client-side with more flexible comparison
+            const allStudentsSnapshot = await getDocs(collection(db, 'students'));
+            const allStudents = allStudentsSnapshot.docs.map(doc => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                name: data.name || '',
+                email: data.email || '',
+                branch: data.branch || '',
+                year: data.year || '',
+                createdAt: data.createdAt || '',
+                college: data.college || '',
+              };
+            });
+            
+            // More flexible matching including case-insensitive comparison
+            const manuallyFilteredStudents = allStudents.filter(student => {
+              const studentCollege = String(student.college || '').toLowerCase().trim();
+              const targetCollegeId = String(collegeId).toLowerCase().trim();
+              
+              return studentCollege.includes(targetCollegeId) || targetCollegeId.includes(studentCollege);
+            });
+            
+            console.log("Students found after manual filtering:", manuallyFilteredStudents.length);
+            
+            if (manuallyFilteredStudents.length > 0) {
+              setStudents(manuallyFilteredStudents);
+              setFilteredStudents(manuallyFilteredStudents);
+              setTotalStudents(manuallyFilteredStudents.length);
+              setTotalPages(Math.ceil(manuallyFilteredStudents.length / studentsPerPage));
+              
+              setBranchFilter("all");
+              setYearFilter("all");
+              setLoading(false);
+              return;
+            }
+          }
+          
+          // If we found students via first direct query, use those
+          if (firestoreStudents.length > 0) {
+            setStudents(firestoreStudents);
+            setFilteredStudents(firestoreStudents);
+            setTotalStudents(firestoreStudents.length);
+            setTotalPages(Math.ceil(firestoreStudents.length / studentsPerPage));
+            
+            setBranchFilter("all");
+            setYearFilter("all");
+            setLoading(false);
+            return;
+          }
+        } catch (firestoreError) {
+          console.error("Error in direct Firestore query:", firestoreError);
+          // Continue with the rest of the function since this is just a fallback
+        }
+      }
+      
+      // If we get here, either we found students with the primary method
+      // or both methods failed to find students
       setStudents(collegeStudents);
       setFilteredStudents(collegeStudents);
       setTotalStudents(collegeStudents.length);
@@ -449,6 +555,27 @@ export default function CollegeStudentsPage() {
             {renderPagination()}
           </div>
         )}
+        
+        {/* Debug section for development/troubleshooting */}
+        <div className="mt-8 border-t pt-4 text-xs text-muted-foreground">
+          <details>
+            <summary className="cursor-pointer">Debug Information</summary>
+            <div className="mt-2 space-y-2 bg-muted p-2 rounded">
+              <p>College ID: {collegeId || 'Not set'}</p>
+              <p>College Name: {collegeName || 'Not set'}</p>
+              <p>Total Students Found: {students.length}</p>
+              <p>Total Filtered Students: {filteredStudents.length}</p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleRetry} 
+                className="mt-2"
+              >
+                Refresh Student Data
+              </Button>
+            </div>
+          </details>
+        </div>
       </div>
     </AuthGuard>
   );

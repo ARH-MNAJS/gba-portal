@@ -126,26 +126,6 @@ export function getGameColors(categoryId: string) {
   return GAME_COLORS[categoryId as keyof typeof GAME_COLORS] || GAME_COLORS.memory;
 }
 
-// Create a new game
-export async function createGame(gameData: Omit<Game, 'id' | 'createdAt' | 'updatedAt'>) {
-  try {
-    const gamesRef = collection(db, 'games');
-    const gameRef = await addDoc(gamesRef, {
-      ...gameData,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    
-    return {
-      id: gameRef.id,
-      ...gameData
-    };
-  } catch (error) {
-    console.error('Error creating game:', error);
-    throw error;
-  }
-}
-
 // Fetch a specific game by ID
 export async function fetchGame(gameId: string): Promise<Game | null> {
   try {

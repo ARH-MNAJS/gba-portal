@@ -2,17 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { use } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { getCollegeNameById } from '@/lib/utils/colleges';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ChevronRight, Gamepad2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Gamepad2, Search } from "lucide-react";
 import { serializeFirestoreData } from "@/lib/utils";
 import { getGameThumbnail, getGameById } from "@/games";
 import { Input } from "@/components/ui/input";
-import { use } from "react";
 
 interface GameStats {
   gameId: string;
@@ -27,8 +27,15 @@ interface Student {
   gameStats: GameStats[];
 }
 
-export default function CollegePracticeReportsPage({ params }: { params: { collegeId: string } }) {
-  const unwrappedParams = use(params);
+interface CollegePageProps {
+  params: {
+    collegeId: string;
+  };
+}
+
+export default function CollegePracticeReportsPage({ params }: CollegePageProps) {
+  // Unwrap params using React.use() with proper type casting
+  const unwrappedParams = use(params as any) as {collegeId: string};
   const collegeId = unwrappedParams.collegeId;
   
   const [college, setCollege] = useState<any>(null);
@@ -206,6 +213,14 @@ export default function CollegePracticeReportsPage({ params }: { params: { colle
     fetchData();
   }, [collegeId, router]);
 
+  const handleGameClick = (gameId: string) => {
+    router.push(`/admin/reports/practice/${collegeId}/game/${gameId}`);
+  };
+
+  const navigateBack = () => {
+    router.push('/admin/reports/practice');
+  };
+
   if (loading) {
     return <div className="space-y-4">
       <Skeleton className="h-8 w-[200px]" />
@@ -215,49 +230,49 @@ export default function CollegePracticeReportsPage({ params }: { params: { colle
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Practice Report for {collegeName}</h1>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="icon" onClick={navigateBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <h1 className="text-2xl font-bold">Practice Report for {collegeName}</h1>
+      </div>
       
       {games.length === 0 ? (
         <Card>
-          <CardContent className="py-4">
-            No games found for this college
+          <CardContent className="py-10 text-center">
+            <Gamepad2 className="mx-auto h-12 w-12 text-muted-foreground mb-3" />
+            <p className="text-lg font-medium">No games found for this college</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6">
-          {games.map(game => (
-            <Card key={game.id}>
-              <CardHeader>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredGames.map(game => (
+            <Card 
+              key={game.id} 
+              className="cursor-pointer hover:border-primary transition-colors"
+              onClick={() => handleGameClick(game.id)}
+            >
+              <CardHeader className="pb-2">
                 <CardTitle>{game.name}</CardTitle>
+                <CardDescription className="line-clamp-2">
+                  {game.description}
+                </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
+              <CardContent className="pb-2">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <strong>Description:</strong>
-                    <div className="text-sm text-muted-foreground">
-                      {game.description}
-                    </div>
+                    <p className="text-xs text-muted-foreground">Players</p>
+                    <p className="font-medium">{game.stats.totalPlayers}</p>
                   </div>
                   <div>
-                    <strong>Category:</strong>
-                    <div className="text-sm text-muted-foreground">
-                      {game.categoryId}
-                    </div>
-                  </div>
-                  <div>
-                    <strong>Total Players:</strong>
-                    <div className="text-sm text-muted-foreground">
-                      {game.stats.totalPlayers}
-                    </div>
-                  </div>
-                  <div>
-                    <strong>Total Plays:</strong>
-                    <div className="text-sm text-muted-foreground">
-                      {game.stats.totalPlays}
-                    </div>
+                    <p className="text-xs text-muted-foreground">Plays</p>
+                    <p className="font-medium">{game.stats.totalPlays}</p>
                   </div>
                 </div>
               </CardContent>
+              <CardFooter className="justify-end pt-0">
+                <ChevronRight className="h-4 w-4" />
+              </CardFooter>
             </Card>
           ))}
         </div>
