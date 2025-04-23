@@ -538,12 +538,6 @@ export default function WordScramble({ studentId, isPreview = false, onComplete 
   // Render the appropriate screen based on game stage
   return (
     <div className="container mx-auto py-6 min-h-[500px] flex items-center justify-center">
-      {isPreview && stage === 'config' && (
-        <div className="absolute top-0 left-0 right-0 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-center py-1 text-sm">
-          Admin Preview Mode - Student statistics will not be saved
-        </div>
-      )}
-      
       <div className="w-full max-w-4xl">
         {stage === 'config' && renderConfig()}
         {stage === 'instructions' && renderInstructions()}

@@ -91,7 +91,7 @@ export function ClientGameComponent({ gameId }: ClientGameComponentProps) {
       
       <div className="bg-card rounded-lg border shadow-sm">
         <GameComponent 
-          studentId="admin-preview" 
+          studentId="admin-preview"
           isPreview={true}
           onComplete={handleGameComplete}
         />

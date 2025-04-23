@@ -60,7 +60,14 @@ const csvSchema = z.object({
   college: z.string().min(1, { message: "College is required" }),
   branch: z.string().min(1, { message: "Branch is required" }),
   year: z.string().min(1, { message: "Year is required" }),
-  file: z.any().refine((file) => file && file.type === "text/csv", {
+  file: z.any().refine((file) => {
+    // Check if file exists
+    if (!file) return false;
+    
+    // Check file extension instead of MIME type
+    const fileName = file.name || '';
+    return fileName.toLowerCase().endsWith('.csv');
+  }, {
     message: "Please upload a CSV file",
   }),
 });
@@ -72,7 +79,7 @@ interface CsvRow {
   name: string;
   email: string;
   phone: string;
-  status?: "success" | "error";
+  status?: "success" | "error" | "pending";
   error?: string;
 }
 
@@ -90,18 +97,11 @@ export default function ImportStudentsPage() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [colleges, setColleges] = useState<CollegeWithYear[]>([]);
-  const [currentAction, setCurrentAction] = useState<"manual" | "csv">("manual");
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [selectedBranch, setSelectedBranch] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<string>("");
-  const [fileName, setFileName] = useState<string>("");
-  const [csvData, setCsvData] = useState<CsvRow[]>([]);
   const [selectedCsvCollege, setSelectedCsvCollege] = useState<string>("");
   const [selectedCsvBranch, setSelectedCsvBranch] = useState<string>("");
   const [selectedCsvYear, setSelectedCsvYear] = useState<string>("");
-  const [showCsvPreview, setShowCsvPreview] = useState<boolean>(false);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [itemsPerPage] = useState<number>(10);
 
   // Form for manual adding
   const manualForm = useForm<ManualAddFormValues>({
@@ -271,27 +271,72 @@ export default function ImportStudentsPage() {
   // Handle CSV file selection
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      // Clear previous file data
+      setCsvFileName("");
+      setCsvPreview([]);
+      csvForm.setValue("file", undefined);
+      return;
+    }
     
-    const fileReader = new FileReader();
+    // Check if file has .csv extension
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      toast.error("Please upload a CSV file");
+      return;
+    }
+    
+    // Set the file name for display
     setCsvFileName(file.name);
+    
+    // Set the file in the form
+    csvForm.setValue("file", file);
+    
+    // Parse the CSV file
+    const fileReader = new FileReader();
     
     fileReader.onload = (event) => {
       const csvText = event.target?.result as string;
-      const parsedData = parse(csvText, {
-        header: true,
-        dynamicTyping: true,
+      try {
+        const parsedData = parse(csvText, {
+          header: true,
+          dynamicTyping: false, // Keep as strings to preserve formatting
+          skipEmptyLines: true,
+          transformHeader: (header) => header.trim(), // Trim header names
+        });
+        
+        // Type assertion with strong typing and better handling of empty values
+        const typedRows = (parsedData.data as unknown[]).map(row => {
+          // Convert to proper format, trimming whitespace
+          return {
+            name: String((row as any).Name || (row as any).name || '').trim(),
+            email: String((row as any).Email || (row as any).email || '').trim(),
+            phone: String((row as any).Phone || (row as any).phone || '').trim()
+          };
+        });
+        
+        // Show first 5 rows as preview
+        setCsvPreview(typedRows.slice(0, 5));
+        
+        // Clear any previous file errors
+        csvForm.clearErrors("file");
+      } catch (error) {
+        console.error("Error parsing CSV:", error);
+        toast.error("Failed to parse CSV file. Please check the format.");
+        setCsvPreview([]);
+        csvForm.setError("file", {
+          type: "custom",
+          message: "Invalid CSV format. Please check the file."
+        });
+      }
+    };
+    
+    fileReader.onerror = () => {
+      toast.error("Error reading the file");
+      setCsvPreview([]);
+      csvForm.setError("file", {
+        type: "custom",
+        message: "Error reading the file"
       });
-      
-      // Type assertion with strong typing
-      const typedRows = (parsedData.data as unknown[]).map(row => ({
-        name: String((row as any).name || ''),
-        email: String((row as any).email || ''),
-        phone: String((row as any).phone || '')
-      }));
-      
-      setCsvPreview(typedRows.slice(0, 5)); // Show first 5 rows as preview
-      csvForm.setValue("file", file);
     };
     
     fileReader.readAsText(file);
@@ -316,24 +361,74 @@ export default function ImportStudentsPage() {
         const text = event.target?.result as string;
         const parsedData = parse(text, {
           header: true,
-          dynamicTyping: true,
+          dynamicTyping: false, // Keep as strings
+          skipEmptyLines: true,
+          transformHeader: (header) => header.trim(), // Trim header names
         });
         
-        // Type assertion with strong typing
-        const typedRows = (parsedData.data as unknown[]).map(row => ({
-          name: String((row as any).name || ''),
-          email: String((row as any).email || ''),
-          phone: String((row as any).phone || '')
-        }));
+        // Type assertion with strong typing and better handling of empty values
+        const typedRows = (parsedData.data as unknown[]).map(row => {
+          // Convert to proper format, trimming whitespace
+          return {
+            name: String((row as any).Name || (row as any).name || '').trim(),
+            email: String((row as any).Email || (row as any).email || '').trim(),
+            phone: String((row as any).Phone || (row as any).phone || '').trim()
+          };
+        });
         
         if (typedRows.length === 0) {
           toast.error("No valid data found in CSV");
           setCsvUploadStatus("idle");
+          setShowUploadDialog(false);
+          return;
+        }
+
+        // Validate data before submission
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const phoneRegex = /^\d{10}$/;
+        const validationErrors: {index: number, field: string, value: string, message: string}[] = [];
+        
+        typedRows.forEach((row, index) => {
+          if (!row.name) {
+            validationErrors.push({index, field: 'name', value: row.name, message: 'Name is required'});
+          }
+          
+          if (!emailRegex.test(row.email)) {
+            validationErrors.push({index, field: 'email', value: row.email, message: 'Invalid email format'});
+          }
+          
+          if (!phoneRegex.test(row.phone)) {
+            validationErrors.push({index, field: 'phone', value: row.phone, message: 'Phone must be 10 digits'});
+          }
+        });
+        
+        if (validationErrors.length > 0) {
+          // Create processed rows with errors
+          const processedRows = typedRows.map((row, index) => {
+            const rowErrors = validationErrors.filter(err => err.index === index);
+            if (rowErrors.length > 0) {
+              return {
+                ...row,
+                status: "error" as const,
+                error: rowErrors.map(err => `${err.field}: ${err.message} (${err.value})`).join(', ')
+              };
+            }
+            return {
+              ...row,
+              status: "pending" as const
+            };
+          });
+          
+          setCsvProcessed(processedRows);
+          setProcessingProgress(100);
+          toast.error(`Found ${validationErrors.length} validation errors in the CSV data`);
+          setCsvUploadStatus("complete");
           return;
         }
 
         try {
           setIsSubmitting(true);
+          setProcessingProgress(10);
           
           // Call the server action to import students in bulk
           const result = await bulkImportUsers(typedRows, {
@@ -342,8 +437,10 @@ export default function ImportStudentsPage() {
             year: values.year
           });
           
+          setProcessingProgress(90);
+          
           // Process results
-          const processedRows = typedRows.map((row, index) => {
+          const processedRows = typedRows.map((row) => {
             const errorItem = result.errors.find(e => e.email === row.email);
             if (errorItem) {
               return {
@@ -361,8 +458,20 @@ export default function ImportStudentsPage() {
           
           setCsvProcessed(processedRows);
           setProcessingProgress(100);
-          toast.success(`Imported ${result.success} of ${typedRows.length} students`);
+          
+          if (result.success > 0) {
+            toast.success(`Imported ${result.success} of ${typedRows.length} students`);
+          } else {
+            toast.error(`Failed to import students. Please check the errors.`);
+          }
+          
           setCsvUploadStatus("complete");
+          
+          // Reset form data after successful import
+          if (result.success > 0) {
+            setCsvPreview([]);
+            setCsvFileName("");
+          }
         } catch (error: any) {
           console.error("Error processing CSV:", error);
           toast.error(error.message || "Failed to process CSV");
@@ -378,6 +487,7 @@ export default function ImportStudentsPage() {
       toast.error(error.message || "Failed to read CSV");
       setCsvUploadStatus("idle");
       setIsSubmitting(false);
+      setShowUploadDialog(false);
     }
   };
 
@@ -434,67 +544,6 @@ export default function ImportStudentsPage() {
       }
     }
   }, [selectedCsvCollege, colleges]);
-
-  // CSV file handling
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setFileName(file.name);
-      parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: function (results) {
-          // Ensure the parsed data is properly typed
-          const typedData = (results.data as unknown[]).map(row => ({
-            name: String((row as any).name || ''),
-            email: String((row as any).email || ''),
-            phone: String((row as any).phone || '')
-          }));
-          setCsvData(typedData);
-          setShowCsvPreview(true);
-        },
-      });
-    }
-  };
-
-  async function handleBulkImport() {
-    if (!selectedCsvCollege || !selectedCsvBranch || !selectedCsvYear) {
-      toast.error("Please select college, branch, and year.");
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const formattedData = csvData.map((row) => ({
-        ...row,
-        collegeId: selectedCsvCollege,
-        branch: selectedCsvBranch,
-        year: selectedCsvYear,
-        role: "student",
-      }));
-
-      await bulkImportUsers(formattedData, {
-        college: selectedCsvCollege,
-        branch: selectedCsvBranch,
-        year: selectedCsvYear
-      });
-      
-      toast.success(`${csvData.length} students have been imported.`);
-      
-      // Reset form
-      setCsvData([]);
-      setFileName("");
-      setSelectedCsvCollege("");
-      setSelectedCsvBranch("");
-      setSelectedCsvYear("");
-      setShowCsvPreview(false);
-    } catch (error) {
-      console.error("Error importing students:", error);
-      toast.error("There was an error importing students. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  }
 
   return (
     <AuthGuard requiredRole="admin">
@@ -804,7 +853,7 @@ export default function ImportStudentsPage() {
                     id="csv-file"
                     type="file"
                     accept=".csv"
-                    onChange={handleFileUpload}
+                    onChange={handleCsvFileChange}
                     className="mt-1"
                   />
                   {csvForm.formState.errors.file && (
@@ -857,7 +906,7 @@ export default function ImportStudentsPage() {
         
         {/* CSV Upload Progress Dialog */}
         <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
-          <DialogContent className="max-w-3xl">
+          <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
             <DialogHeader>
               <DialogTitle>
                 {csvUploadStatus === "processing" 
@@ -867,11 +916,11 @@ export default function ImportStudentsPage() {
               <DialogDescription>
                 {csvUploadStatus === "processing" 
                   ? `Importing students from ${csvFileName}. Please do not close this window.` 
-                  : `Completed importing students from ${csvFileName}.`}
+                  : `Completed importing students from ${csvFileName || "CSV file"}.`}
               </DialogDescription>
             </DialogHeader>
             
-            <div className="py-4">
+            <div className="py-2 flex-1 overflow-hidden flex flex-col">
               {csvUploadStatus === "processing" && (
                 <div className="space-y-4">
                   <div className="w-full bg-gray-200 rounded-full h-2.5">
@@ -887,30 +936,34 @@ export default function ImportStudentsPage() {
               )}
               
               {csvProcessed.length > 0 && (
-                <div className="mt-4 max-h-96 overflow-y-auto">
+                <div className="overflow-auto max-h-[50vh]">
                   <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 sticky top-0">
+                    <thead className="bg-gray-50 sticky top-0 z-10">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {csvProcessed.map((row, index) => (
                         <tr key={index}>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-3 py-2 whitespace-nowrap">
                             {row.status === "success" ? (
                               <span className="text-green-500">✅</span>
+                            ) : row.status === "pending" ? (
+                              <span className="text-yellow-500">⚠️</span>
                             ) : (
                               <span className="text-red-500">❌</span>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">{row.name}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">{row.email}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            {row.status === "error" ? row.error : "Imported successfully"}
+                          <td className="px-3 py-2 whitespace-nowrap">{row.name || "-"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{row.email || "-"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{row.phone || "-"}</td>
+                          <td className="px-3 py-2 break-words max-w-[200px]">
+                            {row.status === "error" ? row.error : (row.status === "pending" ? "Pending validation" : "Imported successfully")}
                           </td>
                         </tr>
                       ))}
@@ -920,7 +973,7 @@ export default function ImportStudentsPage() {
               )}
             </div>
             
-            <DialogFooter>
+            <DialogFooter className="mt-4 pt-2 border-t">
               <Button
                 type="button"
                 onClick={() => {
