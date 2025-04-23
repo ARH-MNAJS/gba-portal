@@ -2,7 +2,7 @@
 
 A web application for cognitive assessment through game-based exercises, built with Next.js, Tailwind CSS, and Firebase.
 
-## Authentication
+## Authentication.
 
 This application uses Firebase Authentication for user management and security. The integration offers:
 
